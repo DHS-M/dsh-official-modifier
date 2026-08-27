@@ -17,7 +17,7 @@ git checkout b150a551b8d465e31e418e1b2eaf5e79bbb7d28e
 Download this product and apply the patch:
 
 ```bash
-git clone https://github.com/kenqtade/dsh-official-modifier.git "$HOME/dsh-official-modifier"
+git clone https://github.com/DHS-M/dsh-official-modifier.git "$HOME/dsh-official-modifier"
 BUILD=1 "$HOME/dsh-official-modifier/modify-official.sh" "$HOME/deepseek-harness"
 ```
 

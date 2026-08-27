@@ -29,6 +29,54 @@ index dfddd177a78c348793d3e5c2d290fa62c5ac850b..3f3520dcaaa4cdb449ee2d35903dd924
  
  Process shutdown gives the plugin tree up to five seconds to dispose. The first `SIGINT`/`SIGTERM` starts that graceful drain — `SIGTERM` is a supervisor's ordinary stop request and exits 0 on every surface, `SIGINT` reports 130; a second signal forces immediate exit. If one-shot normal completion is already stuck in disposal, the first `Ctrl+C` is the escalation and exits immediately instead of being swallowed.
  
+diff --git a/apps/web/index.html b/apps/web/index.html
+index 75c4e5bac68ab375a9658e576cc1e167af7302f8..1589b32b8f6f4d7a0e8f2a9d79075268ea2f094e 100644
+--- a/apps/web/index.html
++++ b/apps/web/index.html
+@@ -5,7 +5,7 @@
+     <meta name="viewport" content="width=device-width, initial-scale=1" />
+     <link rel="manifest" href="/manifest.webmanifest" />
+     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+-    <title>DSH Local Build</title>
++    <title>DSH Remote Web</title>
+   </head>
+   <body>
+     <div id="root"></div>
+diff --git a/apps/web/tests/built-boot.snapshot.ts b/apps/web/tests/built-boot.snapshot.ts
+index 0e48e08ec0fa76020da3002418308f048bdab951..8d1ab80900562a0d7e57cfa9b53a644260625b92 100644
+--- a/apps/web/tests/built-boot.snapshot.ts
++++ b/apps/web/tests/built-boot.snapshot.ts
+@@ -43,7 +43,7 @@ it('boots the built plugin graph and renders a fixture session end to end', asyn
+   // The sidebar renders from the boot graph: every inject layer activated.
+   const tree = await screen.findByRole('tree', { name: 'Sessions' }, { timeout: 10_000 })
+   expect(document.querySelector('svg[viewBox="26 0 156 24"]')).not.toBeNull()
+-  expect(screen.queryByText('DSH Local Build')).toBeNull()
++  expect(screen.queryByText('DSH Remote Web')).toBeNull()
+   // The compact layout dropped group session counts; the fixture workspace
+   // group row renders immediately with its sessions beneath it.
+   const fixtureGroup = (await within(tree).findAllByText('fixture'))
+diff --git a/apps/web/vite.config.ts b/apps/web/vite.config.ts
+index cd27136cb7b1af2b7fbafd257e6b6e38e846d35a..921e8883a1d1af964dc98a0d1a873e6f88db2044 100644
+--- a/apps/web/vite.config.ts
++++ b/apps/web/vite.config.ts
+@@ -8,7 +8,7 @@ const src = (rel: string): string => fileURLToPath(new URL(rel, import.meta.url)
+ const STANDALONE_ERROR = 'apps/web is not a standalone application: bare Vite cannot inject window.__DSH_BOOT__. '
+   + 'From a repository checkout, run `pnpm dsh web`; an installed package uses `dsh web`. '
+   + 'For client-plugin HMR, run `pnpm dsh web` together with `pnpm run dev:web`.'
+-const DEFAULT_CLIENT_TITLE = 'DSH Local Build'
++const DEFAULT_CLIENT_TITLE = 'DSH Remote Web'
+ 
+ /** Escape build-time text before placing it in the HTML title element. */
+ function escapeHtmlText(value: string): string {
+@@ -21,7 +21,7 @@ function clientDocumentTitle(): Plugin {
+   return {
+     name: 'dsh-client-document-title',
+     transformIndexHtml(html) {
+-      return html.replace('<title>DSH Local Build</title>', `<title>${title}</title>`)
++      return html.replace('<title>DSH Remote Web</title>', `<title>${title}</title>`)
+     },
+   }
+ }
 diff --git a/package.json b/package.json
 index 391c93d9389f1ab62af3032d8ba8b8d2d5f9309d..48521ad42e5ef04be6a162772235bf17145fb8bb 100644
 --- a/package.json
@@ -945,6 +993,33 @@ index b37e65c9ea7f224229245cfd60f5d226ee82916e..66f4fd766a6d72c4d120895f81cb6212
  
      // The prose face is live while the plugin is: a produced turn yields a
      // resolver whose matches open through the owner-supplied opener.
+diff --git a/packages/client/ui-renderer/src/client/DocumentTitle.tsx b/packages/client/ui-renderer/src/client/DocumentTitle.tsx
+index a1111d99bd31cb82139e5fa6a52863eb379d33f9..1f016309ec2459621ed7e6df012f8c653bdbd778 100644
+--- a/packages/client/ui-renderer/src/client/DocumentTitle.tsx
++++ b/packages/client/ui-renderer/src/client/DocumentTitle.tsx
+@@ -1,6 +1,6 @@
+ import { useEffect } from 'react'
+ 
+-const DEFAULT_CLIENT_TITLE = 'DSH Local Build'
++const DEFAULT_CLIENT_TITLE = 'DSH Remote Web'
+ 
+ /** Props for the browser title projection. */
+ export interface DocumentTitleProps {
+diff --git a/packages/client/ui-renderer/tests/document-title.client.spec.tsx b/packages/client/ui-renderer/tests/document-title.client.spec.tsx
+index b0f8a3422cf2a409ef4b1e7859b55f08f764f1e8..9332a0f76d089c3398b6ffd2f6b14f74c8d2570d 100644
+--- a/packages/client/ui-renderer/tests/document-title.client.spec.tsx
++++ b/packages/client/ui-renderer/tests/document-title.client.spec.tsx
+@@ -29,8 +29,8 @@ describe('DocumentTitle', () => {
+     vi.stubEnv('DSH_CLIENT_TITLE', '')
+     delete process.env.DSH_CLIENT_TITLE
+     const mounted = render(<DocumentTitle title="First title" />)
+-    expect(document.title).toBe('First title — DSH Local Build')
++    expect(document.title).toBe('First title — DSH Remote Web')
+     mounted.unmount()
+-    expect(document.title).toBe('DSH Local Build')
++    expect(document.title).toBe('DSH Remote Web')
+   })
+ })
 diff --git a/packages/client/ui-settings-general/src/client/SettingsDocumentAction.module.css b/packages/client/ui-settings-general/src/client/SettingsDocumentAction.module.css
 index c4bb82e12f3e6ef0b45667d835e766e50675c429..ee51183c1be5fb63b6313cac2634255f3344257d 100644
 --- a/packages/client/ui-settings-general/src/client/SettingsDocumentAction.module.css
@@ -1425,6 +1500,80 @@ index ddbb6784d17bfe7664b55e2468ce514d4fe4f68b..7959e09a994f70f51f66369390f216f2
    it('binds a remote browser in memory mode without starting a settings read', async () => {
      const describeCall = vi.fn()
      const wire = { settings: { describe: describeCall } }
+diff --git a/packages/client/ui-sidebar/README.md b/packages/client/ui-sidebar/README.md
+index b924c2e6d18217d9689b7c21137321856e14da2e..7090398e83768da8b4a38b42fd34ca9bae091079 100644
+--- a/packages/client/ui-sidebar/README.md
++++ b/packages/client/ui-sidebar/README.md
+@@ -4,7 +4,7 @@ English | [中文](README.zh.md)
+ 
+ Sidebar shell plugin: the brand row, New Session action, layout-owned collapse control, scroll-aware region seat, and bottom-pinned Settings seat. [ui-workspace](../ui-workspace/README.md) owns the Workspace and Session browser rendered into `sidebar.workspaces`; this package neither derives its rows nor owns its view preferences. Collapse into the layout-owned 56px rail remains presentation-local. Contract: the [slot system standard](../../../.agents/notes/implemented/architecture/2026-07-22-slot-type-chain-implementation.md).
+ 
+-The expanded brand row renders `sidebar.brand.mark` and `sidebar.brand.name` as independent single slots, while the collapsed rail renders the same mark slot. Without occupants, the shell uses the fish mark and a `DSH Local Build` label carrying the build's 7-character `DSH_CLIENT_COMMIT_HASH` badge. A deployment package can replace either value without replacing the New Session control or rail geometry; declaration-aware `slots.inject()` lets such a package activate before or after the sidebar.
++The expanded brand row renders `sidebar.brand.mark` and `sidebar.brand.name` as independent single slots, while the collapsed rail renders the same mark slot. Without occupants, the shell uses the fish mark and a `DSH Remote Web` label carrying the build's 7-character `DSH_CLIENT_COMMIT_HASH` badge. A deployment package can replace either value without replacing the New Session control or rail geometry; declaration-aware `slots.inject()` lets such a package activate before or after the sidebar.
+ 
+ New Session starts the runtime's page-local frontend Session Intent. The runtime targets the explicit Workspace used by a scoped action, otherwise the current Session's Workspace, otherwise the most recently active Workspace; when none exists it clears into the blank New Session page. Workspace-specific controls and the shared picker belong to ui-workspace.
+ 
+diff --git a/packages/client/ui-sidebar/README.zh.md b/packages/client/ui-sidebar/README.zh.md
+index 214a2727243d6d9151e31cfcfbc0bdb886c2fcdf..565c431d8bca1462fc671639420c9981b1ef954d 100644
+--- a/packages/client/ui-sidebar/README.zh.md
++++ b/packages/client/ui-sidebar/README.zh.md
+@@ -4,7 +4,7 @@
+ 
+ 侧边栏外壳插件：负责品牌行、New Session 操作、布局持有的折叠控件、可感知滚动的区域 seat，以及固定在底部的 Settings seat。[ui-workspace](../ui-workspace/README.zh.md) 持有渲染到 `sidebar.workspaces` 的 Workspace 与 Session 浏览器；本包既不派生其中的行，也不持有其视图偏好。折叠到布局拥有的 56px 轨道仍属于本地呈现行为。约定：[slot 系统标准](../../../.agents/notes/implemented/architecture/2026-07-22-slot-type-chain-implementation.zh.md)。
+ 
+-展开的品牌行把 `sidebar.brand.mark` 与 `sidebar.brand.name` 渲染为两个独立的 single slot，收起轨道则渲染同一个 mark slot。没有占位者时，外壳使用鱼形标记，以及带有构建期 7 位 `DSH_CLIENT_COMMIT_HASH` 徽标的 `DSH Local Build` 标签。部署包可以单独替换任一值，而无须替换 New Session 控件或轨道几何；声明感知的 `slots.inject()` 让这种包无论先于还是后于侧边栏激活都能生效。
++展开的品牌行把 `sidebar.brand.mark` 与 `sidebar.brand.name` 渲染为两个独立的 single slot，收起轨道则渲染同一个 mark slot。没有占位者时，外壳使用鱼形标记，以及带有构建期 7 位 `DSH_CLIENT_COMMIT_HASH` 徽标的 `DSH Remote Web` 标签。部署包可以单独替换任一值，而无须替换 New Session 控件或轨道几何；声明感知的 `slots.inject()` 让这种包无论先于还是后于侧边栏激活都能生效。
+ 
+ New Session 会启动运行时的页面局部前端 Session Intent。运行时优先使用作用域操作明确指定的 Workspace，否则使用当前 Session 所属 Workspace，再否则使用最近活跃 Workspace；一个 Workspace 都没有时则清空选择，进入空白 New Session 页面。Workspace 专属控件与共享选择器由 ui-workspace 持有。
+ 
+diff --git a/packages/client/ui-sidebar/src/client/SidebarRoot.tsx b/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
+index a7ef74eaa66a94f860b8a84201cc58db9c75a845..9b0752f208aec77b01742e549f2e16964fd54926 100644
+--- a/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
++++ b/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
+@@ -143,7 +143,7 @@ export function SidebarRoot({
+                 {renderSlot('sidebar.brand.name', {}, {
+                   fallback: (
+                     <>
+-                      <span className={css.fallbackBrandName}>DSH Local Build</span>
++                      <span className={css.fallbackBrandName}>DSH Remote Web</span>
+                       {process.env.DSH_CLIENT_COMMIT_HASH
+                         ? <span className={css.buildRevision}>{process.env.DSH_CLIENT_COMMIT_HASH}</span>
+                         : null}
+diff --git a/packages/client/ui-sidebar/tests/__snapshots__/sidebar-snapshot.client.spec.tsx.snap b/packages/client/ui-sidebar/tests/__snapshots__/sidebar-snapshot.client.spec.tsx.snap
+index a8ef9f5d4ebf351c7330572fea032c8e940398cb..640428fd47b5fd333860880ca4deaa52e239763a 100644
+--- a/packages/client/ui-sidebar/tests/__snapshots__/sidebar-snapshot.client.spec.tsx.snap
++++ b/packages/client/ui-sidebar/tests/__snapshots__/sidebar-snapshot.client.spec.tsx.snap
+@@ -140,7 +140,7 @@ exports[`sidebar shell snapshots > renders the expanded column (wordmark, capsul
+               <span
+                 class="fallbackBrandName"
+               >
+-                DSH Local Build
++                DSH Remote Web
+               </span>
+               <span
+                 class="buildRevision"
+@@ -266,7 +266,7 @@ exports[`sidebar shell snapshots > renders the expanded column in the default lo
+               <span
+                 class="fallbackBrandName"
+               >
+-                DSH Local Build
++                DSH Remote Web
+               </span>
+               <span
+                 class="buildRevision"
+diff --git a/packages/client/ui-sidebar/tests/sidebar-root.client.spec.tsx b/packages/client/ui-sidebar/tests/sidebar-root.client.spec.tsx
+index 99ae7e4d5eee8e8b8f806d24654296830f7b6eb9..f1f17555de9f5d7a4c17a7fcc7e960b524061c86 100644
+--- a/packages/client/ui-sidebar/tests/sidebar-root.client.spec.tsx
++++ b/packages/client/ui-sidebar/tests/sidebar-root.client.spec.tsx
+@@ -103,7 +103,7 @@ describe('SidebarRoot shell', () => {
+         options?.fallback ?? null) as SidebarRootComponentProps['renderSlot']}
+     />)
+ 
+-    expect(screen.getByText('DSH Local Build')).toBeTruthy()
++    expect(screen.getByText('DSH Remote Web')).toBeTruthy()
+     expect(screen.getByText('0123456')).toBeTruthy()
+     expect(container.querySelector('svg')).not.toBeNull()
+   })
 diff --git a/packages/host/apiproxy/src/api-proxy.ts b/packages/host/apiproxy/src/api-proxy.ts
 index ba354e1173177951d22834cc0f24e36ec93751d9..3d97ee68ae5e407fa9903d8f62ade4055194f432 100644
 --- a/packages/host/apiproxy/src/api-proxy.ts
