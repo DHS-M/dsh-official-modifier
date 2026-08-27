@@ -1,0 +1,1870 @@
+diff --git a/apps/cli/reference/README.md b/apps/cli/reference/README.md
+index dfddd177a78c348793d3e5c2d290fa62c5ac850b..3f3520dcaaa4cdb449ee2d35903dd924b44e7f64 100644
+--- a/apps/cli/reference/README.md
++++ b/apps/cli/reference/README.md
+@@ -24,7 +24,7 @@ The shipped apps own these command lines:
+ 
+ | Profile | Arguments |
+ |---|---|
+-| `web` | `--host`, `--port`, repeatable `--trusted-host`, `--no-open` |
++| `web` | `--host`, `--port`, repeatable `--trusted-host`, `--no-open`, `--open-authority` |
+ | `headless` | the task text, as the positional argument |
+ 
+ A one-shot task (`dsh --profile headless "run the tests"`) creates one fresh persisted Agent through the core registry, submits the task, waits for quiescence, and flushes the Session before deriving the last non-empty assistant text and final `turn/end` reason from its durable interval. It prints the text on stdout and exits 0 for `completed`, else 1. An invocation with no task is a usage error from that app. The shipped headless profile mounts no ApiProxy, Host, HTTP server, Web runtime, or browser client; a successful run writes nothing to stderr and opens no listening port.
+@@ -64,7 +64,7 @@ Git-hosted plugins that ship sources build during install through their `prepare
+ 
+ ## Web alias
+ 
+-`dsh web` is a hardcoded alias for `--profile web`; the flags after it belong to the web app, whose ordinary bundle provider parses them. `--host` and `--port` override the composed values of the rows that carry them, repeatable `--trusted-host` contributes invocation authorities through `ctx.webRuntime.trustedHosts` (a deployment expression concatenates its own authorities), and `--no-open` disables the default-browser handoff for this invocation. The client-plugin HMR receiver is always mounted and stays idle until a separate `pnpm run dev:web` watcher rebuilds client bundles.
++`dsh web` is a hardcoded alias for `--profile web`; the flags after it belong to the web app, whose ordinary bundle provider parses them. `--host` and `--port` override the composed values of the rows that carry them, repeatable `--trusted-host` contributes invocation authorities through `ctx.webRuntime.trustedHosts` (a deployment expression concatenates its own authorities), `--no-open` disables the default-browser handoff for this invocation, and `--open-authority` selects the core connection policy that treats every caller reaching the server as authorized. The client-plugin HMR receiver is always mounted and stays idle until a separate `pnpm run dev:web` watcher rebuilds client bundles.
+ 
+ ```sh
+ dsh web
+@@ -74,7 +74,7 @@ dsh web --dump-config
+ dsh web --help
+ ```
+ 
+-The production Web runner needs built package and frontend artifacts (`pnpm run build`). It serves `http://127.0.0.1:3080` by default and, for a local launch, opens that canonical host URL only after the complete Loader tree settles. A non-empty inherited `SSH_CONNECTION` or `SSH_TTY` suppresses the browser handoff because the SSH client or editor owns the local forwarded address; the host URL is still printed. The CLI intentionally does not support `--host 0.0.0.0` yet and exits with a usage error. Immediately before a local handoff it prints `dsh web: opening the default browser; pass --no-open to disable`; if the operating-system handoff fails, a diagnostic on stderr states the reason, leaves the server running, and names the URL for manual use. `--trusted-host` adds named authorities accepted by the `/api` browser-trust fence.
++The production Web runner needs built package and frontend artifacts (`pnpm run build`). It serves `http://127.0.0.1:3080` by default and, for a local launch, opens that canonical host URL only after the complete Loader tree settles. A non-empty inherited `SSH_CONNECTION` or `SSH_TTY` suppresses the browser handoff because the SSH client or editor owns the local forwarded address; the host URL is still printed. `--host 0.0.0.0` requires the explicit `--open-authority` switch; that switch is forwarded once to the core `client-connection` plugin, where it applies to the complete `/api` and WebSocket surface rather than requiring route-by-route changes. Immediately before a local handoff it prints `dsh web: opening the default browser; pass --no-open to disable`; if the operating-system handoff fails, a diagnostic on stderr states the reason, leaves the server running, and names the URL for manual use. `--trusted-host` adds named authorities accepted by the `/api` browser-trust fence when the default fenced mode is used.
+ 
+ Process shutdown gives the plugin tree up to five seconds to dispose. The first `SIGINT`/`SIGTERM` starts that graceful drain — `SIGTERM` is a supervisor's ordinary stop request and exits 0 on every surface, `SIGINT` reports 130; a second signal forces immediate exit. If one-shot normal completion is already stuck in disposal, the first `Ctrl+C` is the escalation and exits immediately instead of being swallowed.
+ 
+diff --git a/package.json b/package.json
+index 391c93d9389f1ab62af3032d8ba8b8d2d5f9309d..48521ad42e5ef04be6a162772235bf17145fb8bb 100644
+--- a/package.json
++++ b/package.json
+@@ -181,6 +181,7 @@
+     "tsdown": "^0.22.2",
+     "tsx": "^4.22.4",
+     "typescript": "^6.0.3",
++    "unrun": "^0.3.1",
+     "vite-tsconfig-paths": "^6.1.1",
+     "vitest": "^4.1.8"
+   }
+diff --git a/packages/api/remotes/src/client/index.ts b/packages/api/remotes/src/client/index.ts
+index 6a5164f16040675df0821096b88e77c02d95d41c..be52667bb3ca4e67bf76faf2ba1a729b0427aa76 100644
+--- a/packages/api/remotes/src/client/index.ts
++++ b/packages/api/remotes/src/client/index.ts
+@@ -42,7 +42,7 @@ export type {
+   MessageId, ModelCatalogFailure, ModelProviderGroup, ModelReasoningEffort, ModelSelection,
+   MuxFrame, PromptContentPart, QuestionResponsePayload, QueueAction, RpcError, RpcId, RpcReceipt,
+   RpcRequest, RpcResponse, RpcResult, SessionId, SessionModels, SessionSearchItem,
+-  SessionSummary, SettingsNamespaceView, SettingsPathOpView, SkillEntry, StreamChunk,
++  SessionSummary, SettingsDocumentView, SettingsNamespaceView, SettingsPathOpView, SkillEntry, StreamChunk,
+   SubagentAddress, SubagentCatalog, JobView, ToolCallView, ToolEventView, ToolResultView,
+   WorkspaceId, WorkspaceView,
+ } from '@deepseek-ai/dsh-client-connection/client'
+diff --git a/packages/bundle/base/cordis.patch.yml b/packages/bundle/base/cordis.patch.yml
+index e9567d9206e5b8c64b40cf76b88619f383f2269e..880458c17b8c206d6ea3951465310f892a08312e 100644
+--- a/packages/bundle/base/cordis.patch.yml
++++ b/packages/bundle/base/cordis.patch.yml
+@@ -393,23 +393,10 @@
+         thresholds: [3, 5, 8]
+         argumentsPreviewChars: 500
+ 
+-    # Every mode enables the stable model-facing web_search tool. DeepSeek search
+-    # resolves the same DEEPSEEK_API_KEY credential the Models page manages for
+-    # chat, at each search; its Messages endpoint is separate from the
+-    # chat-completions endpoint, so it takes its own base-URL override. Fetch stays
+-    # disabled and no fetch provider is mounted: that provider defers SSRF
+-    # protection and the model would choose the request target. Search is a full
+-    # auxiliary model request with server-side retrieval, so this shipped DeepSeek
+-    # route gets 60s while the provider-neutral tool default remains 30s.
++    # Every mode enables the stable model-facing web_search tool. No search
++    # provider is pinned here; deployments may add one through an overlay.
+     - id: web
+       name: '@deepseek-ai/dsh-web'
+-      config:
+-        searchProvider: deepseek-official
+-
+-    - id: web-search-deepseek
+-      name: '@deepseek-ai/dsh-web-search-deepseek'
+-      config:
+-        apiKeyEnv: DEEPSEEK_API_KEY
+ 
+     - id: tool-web
+       name: '@deepseek-ai/dsh-tool-web'
+@@ -442,10 +429,3 @@
+     # overlay can pin another workspace.
+     - id: fs-sandbox
+       name: '@deepseek-ai/dsh-fs-sandbox'
+-
+-    # The native DeepSeek adapter. No key or endpoint is inlined: both resolve per
+-    # request from the `llm-deepseek:` settings section over this entry, with the
+-    # key coming from the credential store below. Thinking defaults are a deployment
+-    # choice.
+-    - id: llm-deepseek
+-      name: '@deepseek-ai/dsh-llm-deepseek'
+diff --git a/packages/bundle/base/package.json b/packages/bundle/base/package.json
+index 2096a64b755cacb11f13e56c7d4a14dd855ac0ce..1ef9ef034071d72384a4cce070afe2bb1d5b5fe5 100644
+--- a/packages/bundle/base/package.json
++++ b/packages/bundle/base/package.json
+@@ -61,7 +61,6 @@
+     "@deepseek-ai/dsh-goal-round-driver": "workspace:^",
+     "@deepseek-ai/dsh-api-gateway": "workspace:^",
+     "@deepseek-ai/dsh-llm": "workspace:^",
+-    "@deepseek-ai/dsh-llm-deepseek": "workspace:^",
+     "@deepseek-ai/dsh-llm-pi-ai": "workspace:^",
+     "@deepseek-ai/dsh-llm-retry": "workspace:^",
+     "@deepseek-ai/dsh-permission-presets": "workspace:^",
+@@ -113,7 +112,6 @@
+     "@deepseek-ai/dsh-user-approval": "workspace:^",
+     "@deepseek-ai/dsh-user-questions": "workspace:^",
+     "@deepseek-ai/dsh-web": "workspace:^",
+-    "@deepseek-ai/dsh-web-search-deepseek": "workspace:^",
+     "@deepseek-ai/dsh-workflow-worker-thread": "workspace:^",
+     "@deepseek-ai/dsh-agent-instructions": "workspace:^"
+   },
+diff --git a/packages/bundle/web-app/cordis.patch.yml b/packages/bundle/web-app/cordis.patch.yml
+index 61151bdc6540e9b92b37aad1aa0e4b0fa2bda032..956a9e941f5883aa6126bccd397f281a49b3e966 100644
+--- a/packages/bundle/web-app/cordis.patch.yml
++++ b/packages/bundle/web-app/cordis.patch.yml
+@@ -104,6 +104,11 @@
+     # shares. The base layer's agent-default-model service owns the default model.
+     - id: api-gateway
+       name: '@deepseek-ai/dsh-host-apiproxy'
++      inject: [webStartup]
++      config:
++        # One core authority value drives both transport trust and native host
++        # capability advertisement; fenced mode preserves platform detection.
++        authority: !!js ctx.webStartup.authority
+ 
+     - id: cordis-host-runner
+       name: '@deepseek-ai/dsh-cordis-host-runner'
+@@ -142,6 +147,7 @@
+         printUrl: true
+         surfaceContext: true
+         trustedHosts: !!js ctx.webStartup.trustedHosts
++        authority: !!js ctx.webStartup.authority
+ 
+     # The client-plugin reload chain, always mounted: it is idle until a
+     # rebuild watcher (pnpm run dev:web) actually rewrites client bundles. It
+@@ -163,12 +169,14 @@
+     # webserver under /api; browser half is the fetch/SSE client.
+     - id: connection
+       name: '@deepseek-ai/dsh-client-connection'
+-      inject: [webRuntime]
++      inject: [webRuntime, webStartup]
+       config:
+         # LAN literals derived from the active bind plus --trusted-host extras.
+         # A deployment adding authorities keeps this expression and concatenates
+         # its literals, for example: ['app.internal', ...ctx.webRuntime.trustedHosts].
+         trustedHosts: !!js ctx.webRuntime.trustedHosts
++        # One core switch: open accepts every caller that reaches the server.
++        authority: !!js ctx.webStartup.authority
+ 
+     - id: api-remotes
+       name: '@deepseek-ai/dsh-api-remotes'
+diff --git a/packages/bundle/web-app/src/index.ts b/packages/bundle/web-app/src/index.ts
+index 6965310437af36aaa65df36aae84b0402601f4e1..d325bff94f946adbf80c4ab2ea8bcdf52ec0e332 100644
+--- a/packages/bundle/web-app/src/index.ts
++++ b/packages/bundle/web-app/src/index.ts
+@@ -53,6 +53,8 @@ export interface Config {
+   surfaceContext: boolean
+   /** Explicit `--trusted-host` authorities from this invocation. */
+   trustedHosts: string[]
++  /** Core connection policy published to the browser boot global. */
++  authority: 'fenced' | 'open'
+ }
+ 
+ export const Config: z<Config> = z.object({
+@@ -60,6 +62,7 @@ export const Config: z<Config> = z.object({
+   printUrl: z.boolean().default(true),
+   surfaceContext: z.boolean().default(true),
+   trustedHosts: z.array(String).default([]),
++  authority: z.union(['fenced', 'open']).default('fenced'),
+ })
+ 
+ /** Bind-dependent Web values shared by the trust fence and URL display. */
+@@ -225,6 +228,13 @@ export const internals: {
+  */
+ export function apply(ctx: Context, config: Config): void {
+   const runtime = resolveLanTrust(ctx.webServer.host, config.trustedHosts)
++  // Publish the same core policy that the server-side connection row uses. The
++  // browser must not infer host capability from its public hostname: Cloudflare,
++  // reverse proxies, and LAN aliases are all non-loopback while still being
++  // explicit open-authority deployments.
++  ctx.on('webserver/index-inject', (table) => {
++    table.push({ kind: 'global', name: '__DSH_HOST_AUTHORITY__', value: config.authority })
++  })
+   // The loopback URL belongs to this host. Under SSH, the operator reaches it
+   // through a local forwarding address that this process cannot derive.
+   const handoffBrowser = config.openBrowser && !launchedThroughSsh(ctx)
+diff --git a/packages/bundle/web-app/src/startup.ts b/packages/bundle/web-app/src/startup.ts
+index 9faad244ddb0f7e431c672ba413146da731793af..41687ed80768cfab1a521f339df44b6442210611 100644
+--- a/packages/bundle/web-app/src/startup.ts
++++ b/packages/bundle/web-app/src/startup.ts
+@@ -23,6 +23,8 @@ export const WEB_STARTUP_SERVICE = 'webStartup'
+ export interface WebStartupValues {
+   /** Whether this invocation opens the default browser after startup. */
+   openBrowser: boolean
++  /** Core connection policy: open accepts every caller that reaches the server. */
++  authority: 'fenced' | 'open'
+   /** `--host`, absent when the invocation did not name one. */
+   host?: string
+   /** `--port`, absent when the invocation did not name one. */
+@@ -35,6 +37,7 @@ export interface WebStartupValues {
+ interface WebOptions {
+   host?: string
+   open: boolean
++  openAuthority: boolean
+   port?: string
+   trustedHost?: string[]
+ }
+@@ -50,6 +53,7 @@ function webCommand(): Command {
+     .helpOption('-h, --help', 'show this help')
+     .option('--host <host>', 'bind host')
+     .option('--no-open', 'do not open the Web UI in the default browser')
++    .option('--open-authority', 'treat every caller that reaches this server as authorized')
+     .option('--port <port>', 'listen port; pass 0 to let the OS pick a free one')
+     .option('--trusted-host <authority...>', 'extra authority the /api browser-trust fence accepts (host or host:port; repeatable)')
+     .addHelpText('after', `
+@@ -63,22 +67,23 @@ Examples:
+ /**
+  * Parse and provide the Web invocation as an ordinary Cordis service. The
+  * command's action publishes the flags this invocation named; `--host 0.0.0.0`
+- * or a non-numeric `--port` is a usage error, so on rejection (and on `--help`)
+- * nothing is provided.
++ * is permitted only with explicit `--open-authority`, while a non-numeric
++ * `--port` is always a usage error. On rejection (and on `--help`) nothing is provided.
+  * @param ctx - plugin context carrying the command line.
+  */
+ export function apply(ctx: Context): void {
+   const program = webCommand()
+   program.action(() => {
+     const options = program.opts<WebOptions>()
+-    if (options.host === '0.0.0.0') {
+-      program.error('error: --host 0.0.0.0 is intentionally not supported yet for safety: it would expose remote code execution to the network; use 127.0.0.1 instead')
++    if (options.host === '0.0.0.0' && !options.openAuthority) {
++      program.error('error: --host 0.0.0.0 requires --open-authority because it exposes the Harness to the network')
+     }
+     if (options.port !== undefined && !/^\d+$/.test(options.port)) {
+       program.error(`error: --port must be a number, got ${JSON.stringify(options.port)}`)
+     }
+     ctx.provide(WEB_STARTUP_SERVICE, {
+       openBrowser: options.open,
++      authority: options.openAuthority ? 'open' : 'fenced',
+       ...options.host !== undefined && { host: options.host },
+       ...options.port !== undefined && { port: Number(options.port) },
+       trustedHosts: options.trustedHost ?? [],
+diff --git a/packages/bundle/web-app/tests/startup.spec.ts b/packages/bundle/web-app/tests/startup.spec.ts
+index ba3806232c9ee435237d4bb392057c96e9cfb779..d1b141871286c572d5f4fe1ac91d8d7068bc37d2 100644
+--- a/packages/bundle/web-app/tests/startup.spec.ts
++++ b/packages/bundle/web-app/tests/startup.spec.ts
+@@ -57,6 +57,7 @@ export const apply = ctx => globalThis.__webStartupApply(ctx)
+     '  config:',
+     "    host: !!js ctx.webStartup.host ?? '127.0.0.1'",
+     '    openBrowser: !!js ctx.webStartup.openBrowser',
++    '    authority: !!js ctx.webStartup.authority',
+     '    port: !!js ctx.webStartup.port ?? 3080',
+     '    trustedHosts: !!js ctx.webStartup.trustedHosts',
+     '- id: provider',
+@@ -98,6 +99,7 @@ describe('web command-line provider', () => {
+     expect(values).toEqual({
+       host: '127.0.0.1',
+       openBrowser: false,
++      authority: 'fenced',
+       port: 8080,
+       trustedHosts: ['lab.internal', 'lab-2.internal', '10.0.0.9'],
+     })
+@@ -107,10 +109,11 @@ describe('web command-line provider', () => {
+ 
+   it('leaves deployment values to each consumer when flags omit them', async () => {
+     const { values, observed } = await bootProvider([])
+-    expect(values).toEqual({ openBrowser: true, trustedHosts: [] })
++    expect(values).toEqual({ openBrowser: true, authority: 'fenced', trustedHosts: [] })
+     expect(observed.readerConfig).toEqual({
+       host: '127.0.0.1',
+       openBrowser: true,
++      authority: 'fenced',
+       port: 3080,
+       trustedHosts: [],
+     })
+@@ -121,6 +124,7 @@ describe('web command-line provider', () => {
+     expect(observed.out).toContain('dsh --profile web')
+     expect(observed.out).toContain('--no-open')
+     expect(observed.out).toContain('--trusted-host')
++    expect(observed.out).toContain('--open-authority')
+     expect(values).toBeUndefined()
+     expect(observed.readerConfig).toBeUndefined()
+     expect(observed.exits).toEqual([0])
+@@ -134,11 +138,20 @@ describe('web command-line provider', () => {
+     expect(observed.exits).toEqual([1])
+   })
+ 
+-  it('rejects the intentionally unsupported all-interfaces host before the consumer activates', async () => {
++  it('requires explicit open authority before allowing all-interfaces binding', async () => {
+     const { values, observed } = await bootProvider(['--host', '0.0.0.0'])
+-    expect(observed.out).toContain('--host 0.0.0.0 is intentionally not supported yet for safety: it would expose remote code execution to the network; use 127.0.0.1 instead')
++    expect(observed.out).toContain('--host 0.0.0.0 requires --open-authority')
+     expect(values).toBeUndefined()
+     expect(observed.readerConfig).toBeUndefined()
+     expect(observed.exits).toEqual([1])
+   })
++
++  it('publishes open authority when explicitly requested with all-interfaces binding', async () => {
++    const { values, observed } = await bootProvider(['--host', '0.0.0.0', '--open-authority'])
++    expect(values).toEqual({ host: '0.0.0.0', openBrowser: true, authority: 'open', trustedHosts: [] })
++    expect(observed.readerConfig).toEqual({
++      host: '0.0.0.0', openBrowser: true, authority: 'open', port: 3080, trustedHosts: [],
++    })
++    expect(observed.exits).toEqual([])
++  })
+ })
+diff --git a/packages/bundle/web-app/tests/web-app.spec.ts b/packages/bundle/web-app/tests/web-app.spec.ts
+index 39b9d7ac6be5c15b0f4f8f144e18bdbbc8dbd377..7cfaea1d308fe576d2ccd5757c629def59ca650e 100644
+--- a/packages/bundle/web-app/tests/web-app.spec.ts
++++ b/packages/bundle/web-app/tests/web-app.spec.ts
+@@ -117,7 +117,7 @@ describe('web-app runtime glue', () => {
+     const log = vi.spyOn(console, 'log').mockImplementation((message) => { lifecycle.push(String(message)) })
+     const openBrowser = vi.fn(async (url: string) => { lifecycle.push(`open:${url}`) })
+     internals.openBrowser = openBrowser
+-    apply(ctx, new Config({ openBrowser: true, printUrl: true, surfaceContext: true, trustedHosts: ['lab.internal'] }))
++    apply(ctx, new Config({ authority: 'fenced', openBrowser: true, printUrl: true, surfaceContext: true, trustedHosts: ['lab.internal'] }))
+     await ctx.plugin(SystemPrompt, { persona: '' })
+     // Settle the injected registrations.
+     await new Promise(resolve => setTimeout(resolve, 0))
+@@ -154,7 +154,7 @@ describe('web-app runtime glue', () => {
+     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+     const openBrowser = vi.fn(async () => {})
+     internals.openBrowser = openBrowser
+-    apply(ctx, new Config({ openBrowser: false, printUrl: false, surfaceContext: true, trustedHosts: [] }))
++    apply(ctx, new Config({ authority: 'fenced', openBrowser: false, printUrl: false, surfaceContext: true, trustedHosts: [] }))
+     await ctx.plugin(SystemPrompt, { persona: '' })
+     await new Promise(resolve => setTimeout(resolve, 0))
+     expect(log).not.toHaveBeenCalled()
+@@ -176,7 +176,7 @@ describe('web-app runtime glue', () => {
+         return () => {}
+       },
+     } as never)
+-    apply(ctx, new Config({ openBrowser: false, printUrl: false, surfaceContext: false, trustedHosts: [] }))
++    apply(ctx, new Config({ authority: 'fenced', openBrowser: false, printUrl: false, surfaceContext: false, trustedHosts: [] }))
+     await ctx.plugin(SystemPrompt, { persona: '' })
+     await new Promise(resolve => setTimeout(resolve, 0))
+     const assembly = await ctx.systemPrompt.assemble()
+@@ -191,7 +191,7 @@ describe('web-app runtime glue', () => {
+     const ctx = new Context()
+     ctx.provide('webServer', fakeHttpServer().server)
+     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+-    apply(ctx, new Config({ openBrowser: false, printUrl: true, surfaceContext: true, trustedHosts: [] }))
++    apply(ctx, new Config({ authority: 'fenced', openBrowser: false, printUrl: true, surfaceContext: true, trustedHosts: [] }))
+     await new Promise(resolve => setTimeout(resolve, 0))
+     expect(log).toHaveBeenCalledWith('dsh web: http://127.0.0.1:4567')
+     await ctx.fiber.dispose()
+@@ -208,7 +208,7 @@ describe('web-app runtime glue', () => {
+     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+     const openBrowser = vi.fn(async () => {})
+     internals.openBrowser = openBrowser
+-    apply(ctx, new Config({ openBrowser: true, printUrl: true, surfaceContext: false, trustedHosts: [] }))
++    apply(ctx, new Config({ authority: 'fenced', openBrowser: true, printUrl: true, surfaceContext: false, trustedHosts: [] }))
+     await new Promise(resolve => setTimeout(resolve, 0))
+     expect(log).toHaveBeenCalledWith('dsh web: http://127.0.0.1:4567')
+     expect(openBrowser).not.toHaveBeenCalled()
+@@ -227,7 +227,7 @@ describe('web-app runtime glue', () => {
+     const settlement = new Promise<void>((resolve) => { release = resolve })
+     provideLoader(settled, () => settlement)
+     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+-    apply(settled, new Config({ openBrowser: true, printUrl: true, surfaceContext: true, trustedHosts: [] }))
++    apply(settled, new Config({ authority: 'fenced', openBrowser: true, printUrl: true, surfaceContext: true, trustedHosts: [] }))
+     await new Promise(resolve => setTimeout(resolve, 0))
+     expect(log).not.toHaveBeenCalled()
+     expect(openBrowser).not.toHaveBeenCalled()
+@@ -244,7 +244,7 @@ describe('web-app runtime glue', () => {
+     const failed = new Context()
+     failed.provide('webServer', fakeHttpServer().server)
+     provideLoader(failed, async () => { throw new Error('boot failed') })
+-    apply(failed, new Config({ openBrowser: true, printUrl: true, surfaceContext: true, trustedHosts: [] }))
++    apply(failed, new Config({ authority: 'fenced', openBrowser: true, printUrl: true, surfaceContext: true, trustedHosts: [] }))
+     await new Promise(resolve => setTimeout(resolve, 0))
+     expect(log).not.toHaveBeenCalled()
+     expect(openBrowser).not.toHaveBeenCalled()
+@@ -262,7 +262,7 @@ describe('web-app runtime glue', () => {
+     let releaseTorn: () => void
+     const tornSettlement = new Promise<void>((resolve) => { releaseTorn = resolve })
+     provideLoader(torn, () => tornSettlement)
+-    apply(torn, new Config({ openBrowser: true, printUrl: true, surfaceContext: true, trustedHosts: [] }))
++    apply(torn, new Config({ authority: 'fenced', openBrowser: true, printUrl: true, surfaceContext: true, trustedHosts: [] }))
+     await child.dispose() // the webServer service goes away
+     releaseTorn!()
+     await new Promise(resolve => setTimeout(resolve, 0))
+@@ -279,7 +279,7 @@ describe('web-app runtime glue', () => {
+     const { server } = fakeHttpServer()
+     Object.defineProperty(server, 'port', { get: () => undefined })
+     ctx.provide('webServer', server)
+-    apply(ctx, new Config({ openBrowser: false, printUrl: false, surfaceContext: true, trustedHosts: [] }))
++    apply(ctx, new Config({ authority: 'fenced', openBrowser: false, printUrl: false, surfaceContext: true, trustedHosts: [] }))
+     await ctx.plugin(SystemPrompt, { persona: '' })
+     await new Promise(resolve => setTimeout(resolve, 0))
+     await expect(ctx.systemPrompt.assemble()).rejects.toThrow('webServer service missing')
+@@ -308,7 +308,7 @@ describe('web-app runtime glue', () => {
+     internals.openBrowser = vi.fn(async () => { throw failure })
+     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+-    apply(ctx, new Config({ openBrowser: true, printUrl: false, surfaceContext: false, trustedHosts: [] }))
++    apply(ctx, new Config({ authority: 'fenced', openBrowser: true, printUrl: false, surfaceContext: false, trustedHosts: [] }))
+     await new Promise(resolve => setTimeout(resolve, 0))
+     expect(log).toHaveBeenCalledWith('dsh web: opening the default browser; pass --no-open to disable')
+     expect(diagnostic).toHaveBeenCalledWith(
+diff --git a/packages/client/connection/README.md b/packages/client/connection/README.md
+index 71ef204a589bb67c15ccab58d3cac5a13782ce27..2607b6b3b1b3c97bc814045748d875addf5b7a4d 100644
+--- a/packages/client/connection/README.md
++++ b/packages/client/connection/README.md
+@@ -24,3 +24,9 @@ None; this package neither assembles nor sends a provider request.
+ 
+ - **History resumes an unattached session** — opening history may create the host-side agent and add latency to the first open; there is no persistence-only read path.
+ - **The `/api` bridge buffers each request body in memory** — `maxRequestBodyBytes` (default 300 MiB, sized for the default 200 MiB aggregate image limit after base64 expansion plus envelope headroom) is therefore also the per-request resident bound; a streaming body path would be needed to lower it without shrinking the image limits.
++
++## Core open-authority mode
++
++The connection provider supports an explicit `authority: 'open'` configuration. In this mode, every caller that reaches the WebServer is accepted by the core transport gate: non-loopback HTTP requests, privileged `/api` methods, upgraded event channels, and RPC channels registered with a loopback policy all pass through without per-route changes. The default remains `authority: 'fenced'`, which retains the Host/Origin trust fence and the loopback pin for privileged methods.
++
++This mode is intentionally an **open trust boundary**, not authentication. It means that network reachability is treated as authorization. Use it only behind an access boundary that already restricts who can connect, or when that behavior is explicitly desired. The Web command exposes the same opt-in as `--open-authority`; `--host 0.0.0.0` remains rejected unless that flag is present. The Web bundle forwards the selected value to the single `client-connection` row, so API routes and plugins do not need individual modifications.
+diff --git a/packages/client/connection/src/api-request-trust.ts b/packages/client/connection/src/api-request-trust.ts
+index ea8914ccc6913c21a694b8cbae3e7fe3d538cd8e..b6f4dea2ff208f590e59a0c458db06d33cac9e87 100644
+--- a/packages/client/connection/src/api-request-trust.ts
++++ b/packages/client/connection/src/api-request-trust.ts
+@@ -21,6 +21,9 @@ interface ApiTrustRequest {
+   headers: IncomingHttpHeaders | Headers
+ }
+ 
++/** Core request policy: the normal fence or an explicit open-authority deployment. */
++export type ApiRequestAuthority = 'fenced' | 'open'
++
+ function header(headers: IncomingHttpHeaders | Headers, name: string): string | undefined {
+   if (headers instanceof Headers) return headers.get(name) ?? undefined
+   const value = headers[name]
+@@ -121,3 +124,18 @@ export function isTrustedApiRequest(request: ApiTrustRequest, trustedHosts: read
+     return false
+   }
+ }
++
++/**
++ * Decide whether a request may reach the core transport.
++ *
++ * `open` is deliberately explicit: every caller that can reach the server is
++ * treated as authorized, including non-loopback hosts and privileged methods.
++ * The default remains the DNS-rebinding and same-origin fence.
++ */
++export function isAllowedApiRequest(
++  request: ApiTrustRequest,
++  trustedHosts: readonly string[],
++  authority: ApiRequestAuthority = 'fenced',
++): boolean {
++  return authority === 'open' || isTrustedApiRequest(request, trustedHosts)
++}
+diff --git a/packages/client/connection/src/client/api.ts b/packages/client/connection/src/client/api.ts
+index 1b7627b293e5508558769a1580ce814428c09eb5..6a50cc01fb39d1ff191b7aa831efb8807749c425 100644
+--- a/packages/client/connection/src/client/api.ts
++++ b/packages/client/connection/src/client/api.ts
+@@ -14,7 +14,7 @@ export type {
+   ModelCatalogFailure, ModelCatalogModel, ModelProviderGroup, ModelReasoning,
+   ModelReasoningEffort, ModelSelection, QueueAction, QueuedInboxItem, SessionModels,
+   GoalsApi, GoalRef,
+-  SettingsApi, SettingsNamespaceView, SettingsPathOpView, SettingsSecretView,
++  SettingsApi, SettingsDocumentView, SettingsNamespaceView, SettingsPathOpView, SettingsSecretView,
+   CredentialsApi, CredentialView, ConfigurableProviderView, DiscoveredModelView, LlmApi,
+   SubagentsApi, SubagentAddress, SubagentCatalog, SubagentListEntry, SubagentPromptReceipt,
+   JobView,
+diff --git a/packages/client/connection/src/client/fixture.ts b/packages/client/connection/src/client/fixture.ts
+index cfcae2eb1f7f8721b14bb0c089be6240dcbc754e..185b3579747438e96e1bb3dcaa214d1456764c9d 100644
+--- a/packages/client/connection/src/client/fixture.ts
++++ b/packages/client/connection/src/client/fixture.ts
+@@ -3004,6 +3004,8 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
+       }),
+       // Native opens are deterministic no-op successes in this fixture, as is host.openPath.
+       openDocument: request => ok(request, { opened: true as const }),
++      readDocument: request => ok(request, { name: 'settings.yaml', format: 'yaml' as const, content: '' }),
++      writeDocument: request => ok(request, { name: 'settings.yaml', format: 'yaml' as const, content: request.payload.content }),
+       update: request => err(request, {
+         code: 'settings-rejected',
+         message: 'fixture: the minimal readiness settings descriptor is read-only',
+@@ -3218,6 +3220,8 @@ export class FixtureApiClient extends AbstractApiClient {
+       case 'goal.clear': return this.api.goals.clear(request)
+       case 'settings.describe': return this.api.settings.describe(request)
+       case 'settings.openDocument': return this.api.settings.openDocument(request, signal)
++      case 'settings.readDocument': return this.api.settings.readDocument(request)
++      case 'settings.writeDocument': return this.api.settings.writeDocument(request)
+       case 'settings.update': return this.api.settings.update(request)
+       case 'settings.replace': return this.api.settings.replace(request)
+       case 'settings.mutate': return this.api.settings.mutate(request)
+diff --git a/packages/client/connection/src/client/index.ts b/packages/client/connection/src/client/index.ts
+index dce8d030bffe9a5f9baf58b74ac0d11217915301..1a6ea65bdcad7f6427148fdd67cee93dd5e9a879 100644
+--- a/packages/client/connection/src/client/index.ts
++++ b/packages/client/connection/src/client/index.ts
+@@ -27,7 +27,7 @@ export type {
+   ClientRequest, ServerResponse, ServerRequest, ClientResponse, RpcMessage, RpcReceipt,
+   HostDescription, IApiClient, SessionId, SessionEvent, ContentBlock, StreamChunk,
+   GoalsApi, GoalRef,
+-  SettingsApi, SettingsNamespaceView, SettingsPathOpView, SettingsSecretView,
++  SettingsApi, SettingsDocumentView, SettingsNamespaceView, SettingsPathOpView, SettingsSecretView,
+   CredentialsApi, CredentialView, ConfigurableProviderView, DiscoveredModelView, LlmApi,
+ } from './api.ts'
+ export {
+@@ -75,6 +75,8 @@ export interface ClientTransportHooks {
+ /** Page global carrying {@link ClientTransportHooks}; absent in the served web app. */
+ interface ClientTransportGlobal {
+   __DSH_TRANSPORT__?: ClientTransportHooks
++  /** Server-declared core authority; injected by the Web bundle at document boot. */
++  __DSH_HOST_AUTHORITY__?: 'fenced' | 'open'
+ }
+ 
+ /**
+@@ -87,6 +89,8 @@ export interface ConnectionHandle {
+   readonly api: IApiClient
+   /** Whether the current page authority is loopback; non-browser contexts default to true. */
+   readonly isLoopback: boolean
++  /** Whether the server grants this browser the complete host-capability surface. */
++  readonly hasHostAuthority: boolean
+   /** Generation-scoped Host facts, including the account home and native path-open capability. */
+   readonly hostDescription: HostDescriptionSource
+   /** Generic logical RPC channels over the same Connection transport. */
+@@ -113,6 +117,8 @@ export function apply(ctx: Context): void {
+   const transport = (globalThis as ClientTransportGlobal).__DSH_TRANSPORT__
+   const api: IApiClient = fixtureClient ?? transport?.createApiClient() ?? new WebApiClient()
+   const rpc = fixtureClient?.rpc ?? createWebConnectionRpc(transport?.fetch)
++  const isLoopback = pageLocation === undefined || isLoopbackHostname(pageLocation.hostname)
++  const serverAuthority = (globalThis as ClientTransportGlobal).__DSH_HOST_AUTHORITY__ ?? 'fenced'
+   let started = false
+   let description: HostDescription | undefined
+   const descriptionListeners = new Set<() => void>()
+@@ -129,7 +135,8 @@ export function apply(ctx: Context): void {
+   }
+   const handle: ConnectionHandle = {
+     api,
+-    isLoopback: pageLocation === undefined || isLoopbackHostname(pageLocation.hostname),
++    isLoopback,
++    hasHostAuthority: isLoopback || serverAuthority === 'open',
+     hostDescription: {
+       getSnapshot: () => description,
+       subscribe: (listener) => {
+diff --git a/packages/client/connection/src/index.ts b/packages/client/connection/src/index.ts
+index a1764a3d58b76978a565642bbd6a497f0e6c08f3..72fedd30caf1065f8bb740897128961e03e235b8 100644
+--- a/packages/client/connection/src/index.ts
++++ b/packages/client/connection/src/index.ts
+@@ -7,7 +7,9 @@ import type { WebRoute, WebUpgradeRoute } from '@deepseek-ai/dsh-host-webserver'
+ import { toFetchHandler } from '@deepseek-ai/dsh-host-apiproxy'
+ import { API_PATH, HOST_EVENTS_PATH, MUX_EVENTS_PATH } from './api-path.ts'
+ import { bridge, DEFAULT_MAX_REQUEST_BODY_BYTES } from './http-bridge.ts'
+-import { assertTrustedAuthority, isTrustedApiRequest } from './api-request-trust.ts'
++import {
++  assertTrustedAuthority, isAllowedApiRequest, type ApiRequestAuthority,
++} from './api-request-trust.ts'
+ import { HostConnectionService } from './rpc-host.ts'
+ import { rejectWebSocketUpgrade, WebSocketDownlinks } from './websocket-downlink.ts'
+ 
+@@ -19,6 +21,7 @@ export type {
+   HostConnectionHandle,
+   HostConnectionRpc,
+ } from './rpc.ts'
++export type { ApiRequestAuthority } from './api-request-trust.ts'
+ export { HostConnectionService } from './rpc-host.ts'
+ 
+ export { API_PATH, HOST_EVENTS_PATH, MUX_EVENTS_PATH } from './api-path.ts'
+@@ -57,12 +60,19 @@ export interface ConnectionConfig {
+    * that is not a bare, canonical authority fails the plugin load.
+    */
+   trustedHosts?: string[]
++  /**
++   * Core request authority. `fenced` keeps the Host/Origin trust fence and
++   * loopback pinning; `open` treats every caller that reaches this server as
++   * authorized, including non-loopback callers and privileged methods.
++   */
++  authority?: ApiRequestAuthority
+   /** Maximum buffered JSON body for every `/api` request. Default: 300 MiB. */
+   maxRequestBodyBytes?: number
+ }
+ 
+ export const Config: z<ConnectionConfig> = z.object({
+   trustedHosts: z.array(String).default([]),
++  authority: z.union(['fenced', 'open'] as const).default('fenced'),
+   maxRequestBodyBytes: z.natural().min(1).default(DEFAULT_MAX_REQUEST_BODY_BYTES),
+ })
+ 
+@@ -119,23 +129,24 @@ const PRIVILEGED_METHODS = new Set([
+ ])
+ 
+ /**
+- * Mounts the API gateway under the browser transport prefix. Every request on
+- * the prefix passes the browser-trust fence first (DNS-rebinding and
+- * cross-site defense — [api-request-trust](./api-request-trust.ts));
+- * privileged methods additionally pass it with an empty trust list, which
+- * pins them to loopback.
++ * Mounts the API gateway under the browser transport prefix. In the default
++ * `fenced` mode every request passes the browser-trust fence and privileged
++ * methods additionally pass it with an empty trust list, which pins them to
++ * loopback. In explicit `open` mode the core accepts every request that reaches
++ * the server, including privileged methods, without changing individual routes.
+  * @param ctx - Host plugin context.
+  * @param config - resolved plugin config (schema defaults applied).
+  */
+ export function apply(ctx: Context, config?: ConnectionConfig): void {
+   // The Loader resolves schema defaults; hand-built test contexts may pass none.
+   const trustedHosts = config?.trustedHosts ?? []
++  const authority = config?.authority ?? 'fenced'
+   const maxRequestBodyBytes = config?.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES
+   // Config boundary: a malformed entry fails the load loudly here rather than
+   // silently authorizing its hostname prefix at request time.
+   for (const entry of trustedHosts) assertTrustedAuthority(entry)
+   if (ctx.get('apiProxy') !== undefined) assertImageBodyCapacity(ctx, maxRequestBodyBytes)
+-  const connection = new HostConnectionService(ctx, trustedHosts)
++  const connection = new HostConnectionService(ctx, trustedHosts, authority)
+   const fetchHandler = connection.createSharedFetchHandler(API_PATH, {
+     async fetch(request) {
+       const pathname = new URL(request.url).pathname
+@@ -144,7 +155,7 @@ export function apply(ctx: Context, config?: ConnectionConfig): void {
+         : undefined
+       if (method !== undefined
+         && PRIVILEGED_METHODS.has(method)
+-        && !isTrustedApiRequest(request, [])) {
++        && !isAllowedApiRequest(request, [], authority)) {
+         return new Response('forbidden', { status: 403 })
+       }
+       if (request.method === 'GET' && (pathname === MUX_EVENTS_PATH || pathname === HOST_EVENTS_PATH)) {
+@@ -162,7 +173,7 @@ export function apply(ctx: Context, config?: ConnectionConfig): void {
+     kind: 'prefix',
+     path: API_PATH,
+     handler: async (req, res) => {
+-      if (!isTrustedApiRequest(req, trustedHosts)) {
++      if (!isAllowedApiRequest(req, trustedHosts, authority)) {
+         res.writeHead(403)
+         res.end('forbidden')
+         return
+@@ -181,7 +192,7 @@ export function apply(ctx: Context, config?: ConnectionConfig): void {
+       apiCtx.effect(() => apiCtx.webServer.registerUpgrade({
+         path,
+         handler: (req, socket, head) => {
+-          if (!isTrustedApiRequest(req, trustedHosts)) {
++          if (!isAllowedApiRequest(req, trustedHosts, authority)) {
+             rejectWebSocketUpgrade(socket)
+             return
+           }
+diff --git a/packages/client/connection/src/rpc-host.ts b/packages/client/connection/src/rpc-host.ts
+index 0da66c85a74709076a07315e6e5329a2afdacb65..ff38c74ac0e2248927986a13c8c55b2e55e8410c 100644
+--- a/packages/client/connection/src/rpc-host.ts
++++ b/packages/client/connection/src/rpc-host.ts
+@@ -12,7 +12,7 @@ import {
+   type ServerResponse as RpcServerResponse,
+ } from '@deepseek-ai/dsh-host-apiproxy/api'
+ import { bridge, type FetchHandler } from './http-bridge.ts'
+-import { isTrustedApiRequest } from './api-request-trust.ts'
++import { isAllowedApiRequest, type ApiRequestAuthority } from './api-request-trust.ts'
+ import { API_PATH } from './api-path.ts'
+ import type {
+   ConnectionRpcEndpointMatcher,
+@@ -43,13 +43,22 @@ declare module '@deepseek-ai/cordis' {
+ export class HostConnectionService extends Service implements HostConnectionHandle {
+   private readonly interceptors = new Map<string, ConnectionRpcInterceptor>()
+ 
++  /** Core authority policy inherited by every registered RPC channel. */
++  private readonly authority: ApiRequestAuthority
++
+   /**
+    * Provide the Host half over the active HTTP server.
+    * @param ctx - owning Connection plugin context.
+    * @param trustedHosts - deployment authorities accepted by trusted-host channels.
++   * @param authority - core policy; `open` overrides channel-level loopback fences.
+    */
+-  constructor(ctx: Context, private readonly trustedHosts: readonly string[]) {
++  constructor(
++    ctx: Context,
++    private readonly trustedHosts: readonly string[],
++    authority: ApiRequestAuthority = 'fenced',
++  ) {
+     super(ctx, 'connection')
++    this.authority = authority
+   }
+ 
+   /** Generic channel registry scoped to the Context reading this service. */
+@@ -79,7 +88,7 @@ export class HostConnectionService extends Service implements HostConnectionHand
+         if (endpoint === undefined || interceptor === undefined || !interceptor.matches(endpoint)) {
+           return fallback.fetch(request)
+         }
+-        if (interceptor.options.authority === 'loopback' && !isTrustedApiRequest(request, [])) {
++        if (interceptor.options.authority === 'loopback' && !isAllowedApiRequest(request, [], this.authority)) {
+           return Promise.resolve(new Response('forbidden', { status: 403 }))
+         }
+         return interceptor.fetchHandler.fetch(request)
+@@ -100,7 +109,7 @@ export class HostConnectionService extends Service implements HostConnectionHand
+       kind: 'prefix',
+       path: channel,
+       handler: async (req, res) => {
+-        if (!isTrustedApiRequest(req, trustedHosts)) {
++        if (!isAllowedApiRequest(req, trustedHosts, this.authority)) {
+           res.writeHead(403)
+           res.end('forbidden')
+           return
+diff --git a/packages/client/connection/tests/client-apply.client.spec.ts b/packages/client/connection/tests/client-apply.client.spec.ts
+index b7f6ebe3896256b50a2424ed14c0645840cd8421..906a4bc29728b3877c852f66988b9ea226214961 100644
+--- a/packages/client/connection/tests/client-apply.client.spec.ts
++++ b/packages/client/connection/tests/client-apply.client.spec.ts
+@@ -49,6 +49,7 @@ class FakeWebSocket extends EventTarget {
+ 
+ afterEach(() => {
+   delete (globalThis as Win).location
++  delete (globalThis as Record<string, unknown>).__DSH_HOST_AUTHORITY__
+   sockets.length = 0
+   if (originalWebSocket === undefined) delete (globalThis as WebSocketGlobal).WebSocket
+   else globalThis.WebSocket = originalWebSocket
+@@ -68,6 +69,7 @@ describe('connection client apply', () => {
+     const handle = await mount()
+     expect(handle.api).toBeInstanceOf(WebApiClient)
+     expect(handle.isLoopback).toBe(true)
++    expect(handle.hasHostAuthority).toBe(true)
+   })
+ 
+   it('selects the fixture client under ?fixture (and with no location at all stays real)', async () => {
+@@ -77,11 +79,22 @@ describe('connection client apply', () => {
+     const handle = await mount()
+     expect(handle.api).toBeInstanceOf(WebApiClient)
+     expect(handle.isLoopback).toBe(true)
++    expect(handle.hasHostAuthority).toBe(true)
+   })
+ 
+   it('reports non-loopback page authority through the connection handle', async () => {
+     ;(globalThis as Win).location = { hostname: '192.0.2.20', search: '' }
+-    expect((await mount()).isLoopback).toBe(false)
++    const handle = await mount()
++    expect(handle.isLoopback).toBe(false)
++    expect(handle.hasHostAuthority).toBe(false)
++  })
++
++  it('accepts server-declared open authority for a non-loopback page', async () => {
++    ;(globalThis as Win).location = { hostname: 'public.example.test', search: '' }
++    ;(globalThis as Record<string, unknown>).__DSH_HOST_AUTHORITY__ = 'open'
++    const handle = await mount()
++    expect(handle.isLoopback).toBe(false)
++    expect(handle.hasHostAuthority).toBe(true)
+   })
+ 
+   it('start() hands out one loop, rejects a second consumer, and stop() aborts the streams', async () => {
+diff --git a/packages/client/connection/tests/fake-api.client.ts b/packages/client/connection/tests/fake-api.client.ts
+index 7c9dc6accbf3c2c8d53effbe0b43772131e4203a..3dd6eb52b73254df3189217c5e7fb2ab39c6799a 100644
+--- a/packages/client/connection/tests/fake-api.client.ts
++++ b/packages/client/connection/tests/fake-api.client.ts
+@@ -208,6 +208,8 @@ export class FakeApiClient implements IApiClient {
+   readonly settings: IApiClient['settings'] = {
+     describe: payload => this.record('settings.describe', payload, Promise.resolve(ok({ writable: true, hasDocument: false, namespaces: [] }))),
+     openDocument: payload => this.record('settings.openDocument', payload, Promise.resolve(ok({ opened: true as const }))),
++    readDocument: payload => this.record('settings.readDocument', payload, Promise.resolve(ok({ name: 'settings.yaml', format: 'yaml' as const, content: '' }))),
++    writeDocument: payload => this.record('settings.writeDocument', payload, Promise.resolve(ok({ name: 'settings.yaml', format: 'yaml' as const, content: payload.content }))),
+     update: payload => this.record('settings.update', payload, Promise.resolve(ok({ ns: 'fake', schema: {}, value: {}, applies: 'live' as const, secrets: [], revision: 0 }))),
+     replace: payload => this.record('settings.replace', payload, Promise.resolve(ok({ ns: 'fake', schema: {}, value: {}, applies: 'live' as const, secrets: [], revision: 0 }))),
+     mutate: payload => this.record('settings.mutate', payload, Promise.resolve(ok({ ns: 'fake', schema: {}, value: {}, applies: 'live' as const, secrets: [], revision: 0 }))),
+diff --git a/packages/client/connection/tests/node-half.host.spec.ts b/packages/client/connection/tests/node-half.host.spec.ts
+index 022436d558e836745de01b71ce8174cfda447f1c..22f20870854c56b00d591c95b00ed791c1729c72 100644
+--- a/packages/client/connection/tests/node-half.host.spec.ts
++++ b/packages/client/connection/tests/node-half.host.spec.ts
+@@ -75,7 +75,7 @@ function fakeResponse(): { response: ServerResponse; state: { status?: number; b
+   return { response, state }
+ }
+ 
+-async function mounted(config?: { trustedHosts?: string[] }): Promise<{
++async function mounted(config?: { trustedHosts?: string[]; authority?: 'fenced' | 'open' }): Promise<{
+   routes: WebRoute[]
+   upgrades: WebUpgradeRoute[]
+   dispose: () => Promise<void>
+@@ -198,6 +198,29 @@ describe('connection node half', () => {
+     await dispose()
+   })
+ 
++  it('open authority passes arbitrary hosts and privileged methods through the same core gate', async () => {
++    const { routes, upgrades, dispose } = await mounted({ authority: 'open' })
++    const headers = {
++      host: 'anywhere.example',
++      origin: 'https://different-origin.example',
++      'sec-fetch-site': 'cross-site',
++    }
++    for (const method of [
++      'host.pickDirectory', 'host.openPath',
++      'settings.describe', 'settings.mutate',
++      'credentials.describe', 'credentials.set',
++      'llm.discoverModels', 'agentPreset.read',
++    ]) {
++      const response = fakeResponse()
++      await routes[0]!.handler(fakeRequest(headers, `${API_PATH}/${method}`), response.response)
++      expect(response.state.status).not.toBe(403)
++    }
++    // The same helper is used by both registered WebSocket upgrade routes;
++    // the existing upgrade tests cover the socket protocol itself.
++    expect(upgrades).toHaveLength(2)
++    await dispose()
++  })
++
+   it('passes loopback and declared-authority requests through to the bridge', async () => {
+     const { routes, dispose } = await mounted({ trustedHosts: ['harness.example:3080', '192.168.1.5'] })
+     // Loopback, no browser markers (curl shape): the fence passes; the carrier
+diff --git a/packages/client/runtime/tests/client-apply.client.spec.ts b/packages/client/runtime/tests/client-apply.client.spec.ts
+index 199181fe2e475104b048bcdc858f66023b173d00..1ff09eaf38d8972b631ab1a47f76698bb087591f 100644
+--- a/packages/client/runtime/tests/client-apply.client.spec.ts
++++ b/packages/client/runtime/tests/client-apply.client.spec.ts
+@@ -31,6 +31,7 @@ async function mount(): Promise<Bench> {
+   const handle: ConnectionHandle = {
+     api,
+     isLoopback: true,
++    hasHostAuthority: true,
+     hostDescription: {
+       getSnapshot: () => undefined,
+       subscribe: () => () => {},
+diff --git a/packages/client/runtime/tests/fake-api.client.ts b/packages/client/runtime/tests/fake-api.client.ts
+index e5bdaa5f661e9806fa9e30e9c05c2abcde12fadc..0501dcf5bfea403af1549d82d5d23e9719eff640 100644
+--- a/packages/client/runtime/tests/fake-api.client.ts
++++ b/packages/client/runtime/tests/fake-api.client.ts
+@@ -261,6 +261,8 @@ export class FakeApiClient implements IApiClient {
+   readonly settings: IApiClient['settings'] = {
+     describe: payload => this.record('settings.describe', payload, Promise.resolve(ok({ writable: true, hasDocument: false, namespaces: [] }))),
+     openDocument: payload => this.record('settings.openDocument', payload, Promise.resolve(ok({ opened: true as const }))),
++    readDocument: payload => this.record('settings.readDocument', payload, Promise.resolve(ok({ name: 'settings.yaml', format: 'yaml' as const, content: '' }))),
++    writeDocument: payload => this.record('settings.writeDocument', payload, Promise.resolve(ok({ name: 'settings.yaml', format: 'yaml' as const, content: payload.content }))),
+     update: payload => this.record('settings.update', payload, Promise.resolve(ok({ ns: 'fake', schema: {}, value: {}, applies: 'live' as const, secrets: [], revision: 0 }))),
+     replace: payload => this.record('settings.replace', payload, Promise.resolve(ok({ ns: 'fake', schema: {}, value: {}, applies: 'live' as const, secrets: [], revision: 0 }))),
+     mutate: payload => this.record('settings.mutate', payload, Promise.resolve(ok({ ns: 'fake', schema: {}, value: {}, applies: 'live' as const, secrets: [], revision: 0 }))),
+diff --git a/packages/client/runtime/tests/wire-events.client.spec.ts b/packages/client/runtime/tests/wire-events.client.spec.ts
+index fbc4204b0d7944aad0db69164de316af9b5b931b..8b2ff21b3840ee4cfe47a58acbc6ed5dce5b8def 100644
+--- a/packages/client/runtime/tests/wire-events.client.spec.ts
++++ b/packages/client/runtime/tests/wire-events.client.spec.ts
+@@ -61,6 +61,7 @@ async function mount(): Promise<Bench> {
+   const handle: ConnectionHandle = {
+     api,
+     isLoopback: true,
++    hasHostAuthority: true,
+     hostDescription: {
+       getSnapshot: () => undefined,
+       subscribe: () => () => {},
+diff --git a/packages/client/tsdown.client.ts b/packages/client/tsdown.client.ts
+index 44aab8cf1b831aff6a7d9d05dcd32479ab85d03f..732c67d0519c7ba9b232bb02abbf48e0e3afa0e6 100644
+--- a/packages/client/tsdown.client.ts
++++ b/packages/client/tsdown.client.ts
+@@ -12,7 +12,6 @@ import { readFile } from 'node:fs/promises'
+ import { existsSync, globSync, readFileSync } from 'node:fs'
+ import { isBuiltin } from 'node:module'
+ import { basename, dirname, isAbsolute, relative, resolve as resolvePath, sep } from 'node:path'
+-import { fileURLToPath } from 'node:url'
+ import type { UserConfig } from 'tsdown'
+ import { transform } from 'lightningcss'
+ import { optionalStringArray } from './modules/src/client/manifest.ts'
+@@ -77,7 +76,10 @@ const GENERATED_REMOTE = /^@deepseek-ai\/dsh-[a-z0-9]+(?:-[a-z0-9]+)*\/remote$/
+  */
+ const SKIP_WORKSPACE_BUILD: UserConfig = { entry: '' }
+ 
+-const REPOSITORY_ROOT = fileURLToPath(new URL('../..', import.meta.url))
++// tsdown evaluates this helper from a materialized `.unrun` config path, so
++// import.meta.url is not the source package location. The workspace build always
++// sets cwd to the repository root, which is the stable anchor for package scans.
++const REPOSITORY_ROOT = process.cwd()
+ 
+ /** Rebase a physical lib-relative source onto a browser URL that mirrors the repository directories. */
+ function browserSourcePath(source: string, sourcemapPath: string): string {
+diff --git a/packages/client/ui-deliverables/src/client/ProducedFiles.tsx b/packages/client/ui-deliverables/src/client/ProducedFiles.tsx
+index a14e2bea860fefecbf2400dae117cad1d214cb0b..547e228efbe14f5314bf225569699a0ae9aec699 100644
+--- a/packages/client/ui-deliverables/src/client/ProducedFiles.tsx
++++ b/packages/client/ui-deliverables/src/client/ProducedFiles.tsx
+@@ -50,6 +50,8 @@ export function fitProducedFiles(
+ export interface ProducedFilesInjected {
+   /** Whether the browser itself is connected over loopback. */
+   isLoopback: boolean
++  /** Whether the core grants this browser host authority, including open mode. */
++  hasHostAuthority?: boolean
+   hooks: {
+     /** Current generation's Host description, bound by the slot renderer. */
+     hostDescription: HostDescriptionSource
+@@ -71,10 +73,10 @@ function moreLabel(t: ProducedFilesProps['t'], count: number): string {
+  * @returns The produced-files row.
+  */
+ export function ProducedFiles({
+-  matched: paths, openFile, isLoopback, useHostDescription, t,
++  matched: paths, openFile, isLoopback, hasHostAuthority, useHostDescription, t,
+ }: ProducedFilesProps) {
+   const hostCanOpenPath = useHostDescription(description => description?.canOpenPath === true)
+-  const canOpenPath = isLoopback && hostCanOpenPath
++  const canOpenPath = (hasHostAuthority ?? isLoopback) && hostCanOpenPath
+   const limit = Math.min(paths.length, SHOWN_LIMIT)
+   const [shownCount, setShownCount] = useState(limit)
+   const rowRef = useRef<HTMLDivElement>(null)
+diff --git a/packages/client/ui-deliverables/src/client/index.ts b/packages/client/ui-deliverables/src/client/index.ts
+index 38b7f3fb89e467d6e022f5c3f67e37abfb140d2b..8bd01c09e1b69f77ecacfb0bf2c33200d64c2d84 100644
+--- a/packages/client/ui-deliverables/src/client/index.ts
++++ b/packages/client/ui-deliverables/src/client/index.ts
+@@ -46,6 +46,7 @@ export function apply(ctx: ClientContext): void {
+       locale: NS,
+       inject: () => ({
+         isLoopback: connection.isLoopback,
++        hasHostAuthority: connection.hasHostAuthority,
+         hooks: { hostDescription: connection.hostDescription },
+       }),
+     }, ProducedFiles),
+diff --git a/packages/client/ui-deliverables/tests/produced-files.client.spec.tsx b/packages/client/ui-deliverables/tests/produced-files.client.spec.tsx
+index b37e65c9ea7f224229245cfd60f5d226ee82916e..66f4fd766a6d72c4d120895f81cb621222e21e5e 100644
+--- a/packages/client/ui-deliverables/tests/produced-files.client.spec.tsx
++++ b/packages/client/ui-deliverables/tests/produced-files.client.spec.tsx
+@@ -283,12 +283,14 @@ describe('ProducedFiles row', () => {
+   const capability = (
+     canOpenPath: boolean | undefined,
+     isLoopback = true,
+-  ): Pick<ProducedFilesProps, 'isLoopback' | 'useHostDescription'> => {
++    hasHostAuthority?: boolean,
++  ): Pick<ProducedFilesProps, 'isLoopback' | 'hasHostAuthority' | 'useHostDescription'> => {
+     const description = canOpenPath === undefined
+       ? undefined
+       : { version: 'test', cwd: '/workspace', attachedSessions: 1, home: '/h', canOpenPath }
+     return {
+       isLoopback,
++      ...(hasHostAuthority === undefined ? {} : { hasHostAuthority }),
+       useHostDescription: selector => selector(description),
+     }
+   }
+@@ -381,7 +383,18 @@ describe('ProducedFiles row', () => {
+     bounds.mockRestore()
+   })
+ 
+-  it('keeps the folder action absent without overflow or a local native opener', () => {
++  it('shows the folder action for an open-authority remote native opener', () => {
++    const openFile = vi.fn<(path: string) => void>()
++    const overflowing = ['a.md', 'b.md', 'c.md', 'd.md', 'e.md', 'f.md', 'g.md']
++    const view = render(
++      <ProducedFiles matched={overflowing} openFile={openFile} {...capability(true, false, true)} t={t} />,
++    )
++    const showFolder = view.getByRole('button', { name: '在文件夹中显示' })
++    fireEvent.click(showFolder)
++    expect(openFile).toHaveBeenLastCalledWith('.')
++  })
++
++  it('keeps the folder action absent without overflow or a native opener', () => {
+     const openFile = vi.fn<(path: string) => void>()
+     const view = render(
+       <ProducedFiles matched={['a.md']} openFile={openFile} {...capability(true)} t={t} />,
+@@ -475,7 +488,11 @@ describe('plugin registration', () => {
+     await fiber.await()
+     const [entry] = ctx.slots.entries('conversation.chat.turnTail')
+     expect(entry).toBeDefined()
+-    expect(entry?.inject?.()).toEqual({ isLoopback: false, hooks: { hostDescription } })
++    expect(entry?.inject?.()).toEqual({
++      isLoopback: false,
++      hasHostAuthority: undefined,
++      hooks: { hostDescription },
++    })
+ 
+     // The prose face is live while the plugin is: a produced turn yields a
+     // resolver whose matches open through the owner-supplied opener.
+diff --git a/packages/client/ui-settings-general/src/client/SettingsDocumentAction.module.css b/packages/client/ui-settings-general/src/client/SettingsDocumentAction.module.css
+index c4bb82e12f3e6ef0b45667d835e766e50675c429..ee51183c1be5fb63b6313cac2634255f3344257d 100644
+--- a/packages/client/ui-settings-general/src/client/SettingsDocumentAction.module.css
++++ b/packages/client/ui-settings-general/src/client/SettingsDocumentAction.module.css
+@@ -14,3 +14,55 @@
+   text-overflow: ellipsis;
+   white-space: nowrap;
+ }
++
++.editorDialog {
++  width: min(860px, calc(100vw - 32px));
++  max-width: none;
++}
++
++.editorContent {
++  max-height: min(78vh, 760px);
++}
++
++.editorBody {
++  min-height: 420px;
++}
++
++.editor {
++  display: block;
++  width: 100%;
++  min-height: 420px;
++  resize: vertical;
++  border: 1px solid var(--dsw-alias-border-secondary);
++  border-radius: 8px;
++  background: var(--dsw-alias-background-secondary);
++  color: var(--dsw-alias-text-primary);
++  font-family: var(--dsw-font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
++  font-size: 13px;
++  line-height: 1.55;
++  padding: 12px;
++  tab-size: 2;
++}
++
++.editor:focus {
++  border-color: var(--dsw-alias-border-focus, var(--dsw-alias-border-primary));
++  outline: none;
++}
++
++.editorFooter {
++  display: flex;
++  align-items: center;
++  gap: 8px;
++  width: 100%;
++}
++
++.editorError {
++  flex: 1;
++  min-width: 0;
++  overflow: hidden;
++  color: var(--dsw-alias-state-error-primary);
++  font-size: 12px;
++  line-height: 18px;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
+diff --git a/packages/client/ui-settings-general/src/client/SettingsDocumentAction.tsx b/packages/client/ui-settings-general/src/client/SettingsDocumentAction.tsx
+index bb4d0ca7a0f4b69eae09863cb8240a1e6b721ca5..88ecfdcdd5f9bf59c284420ed575fd79dcc480ea 100644
+--- a/packages/client/ui-settings-general/src/client/SettingsDocumentAction.tsx
++++ b/packages/client/ui-settings-general/src/client/SettingsDocumentAction.tsx
+@@ -1,8 +1,9 @@
+-/** Optional settings-header action for opening a file-backed Host document. */
++/** Browser-only settings document action and editor. */
+ 
+-import { useEffect } from 'react'
++import { useEffect, useState } from 'react'
+ import type { ReactNode } from 'react'
+-import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
++import type { SettingsDocumentView } from '@deepseek-ai/dsh-api-remotes/client'
++import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+ import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+ import type { SettingsDocumentStore } from './settings-document-store.ts'
+ import css from './SettingsDocumentAction.module.css'
+@@ -21,31 +22,106 @@ export interface SettingsDocumentActionInjected {
+ export type SettingsDocumentActionProps =
+   PropsRuntime<'settings.action'> & PropsLocale<'settings'> & InjectFace<SettingsDocumentActionInjected>
+ 
++/** Convert an unknown failure into a short UI-safe diagnostic. */
++function errorMessage(error: unknown): string {
++  return error instanceof Error ? error.message : String(error)
++}
++
+ /**
+- * Render the open-document action only after Host metadata confirms document availability.
+- * @param props - header owner props, localized copy, and injected document state.
+- * @returns the action, or null while unavailable or unresolved.
++ * Render the configuration action and a browser-native raw document editor.
++ * The editor never launches a server desktop process and never receives an
++ * absolute host path; the host returns only a file name, format, and text.
+  */
+ export function SettingsDocumentAction({ controller, useSnapshot, t }: SettingsDocumentActionProps): ReactNode {
+   const state = useSnapshot(snapshot => snapshot)
++  const [document, setDocument] = useState<SettingsDocumentView | null>(null)
++  const [draft, setDraft] = useState('')
++  const [loading, setLoading] = useState(false)
++  const [saving, setSaving] = useState(false)
++  const [editorError, setEditorError] = useState<string | null>(null)
+ 
+   useEffect(() => {
+     void controller.load()
+   }, [controller])
+ 
++  const openEditor = async (): Promise<void> => {
++    setLoading(true)
++    setEditorError(null)
++    try {
++      const next = await controller.readDocument()
++      setDocument(next)
++      setDraft(next.content)
++    } catch (error) {
++      setEditorError(errorMessage(error))
++    } finally {
++      setLoading(false)
++    }
++  }
++
++  const saveDocument = async (): Promise<void> => {
++    setSaving(true)
++    setEditorError(null)
++    try {
++      const next = await controller.writeDocument(draft)
++      setDocument(next)
++      setDraft(next.content)
++    } catch (error) {
++      setEditorError(errorMessage(error))
++    } finally {
++      setSaving(false)
++    }
++  }
++
+   if (state.status !== 'ready') return null
+ 
++  const dirty = document !== null && draft !== document.content
+   return (
+-    <div className={css.action}>
+-      {state.error === null ? null : <span className={css.error} role="alert">{t('openDocument.error')}</span>}
+-      <Button
+-        variant="outline"
+-        size="sm"
+-        disabled={state.opening}
+-        onClick={() => { void controller.open() }}
++    <>
++      <div className={css.action}>
++        {state.error === null ? null : <span className={css.error} role="alert">{t('openDocument.error')}</span>}
++        {editorError === null ? null : <span className={css.error} role="alert">{editorError}</span>}
++        <Button
++          variant="outline"
++          size="sm"
++          disabled={loading}
++          onClick={() => { void openEditor() }}
++        >
++          {loading ? t('documentEditor.loading') : t('openDocument')}
++        </Button>
++      </div>
++      <Modal
++        open={document !== null}
++        onClose={() => { if (!saving) setDocument(null) }}
++        title={document === null ? t('documentEditor.title') : `${t('documentEditor.title')} — ${document.name}`}
++        closeLabel={t('close')}
++        description={document === null ? '' : t('documentEditor.description')}
++        className={css.editorDialog ?? ''}
++        contentClassName={css.editorContent ?? ''}
++        footer={(
++          <div className={css.editorFooter}>
++            {editorError === null ? null : <span className={css.editorError} role="alert">{editorError}</span>}
++            <Button variant="ghost" size="sm" disabled={saving} onClick={() => { setDocument(null) }}>
++              {t('documentEditor.cancel')}
++            </Button>
++            <Button variant="primary" size="sm" disabled={saving || !dirty} onClick={() => { void saveDocument() }}>
++              {saving ? t('documentEditor.saving') : t('documentEditor.save')}
++            </Button>
++          </div>
++        )}
+       >
+-        {t('openDocument')}
+-      </Button>
+-    </div>
++        <div className={css.editorBody}>
++          {document === null ? null : (
++            <textarea
++              className={css.editor}
++              value={draft}
++              onChange={event => { setDraft(event.currentTarget.value) }}
++              spellCheck={false}
++              aria-label={document.name}
++              autoFocus
++            />
++          )}
++        </div>
++      </Modal>
++    </>
+   )
+ }
+diff --git a/packages/client/ui-settings-general/src/client/index.ts b/packages/client/ui-settings-general/src/client/index.ts
+index dd62e8a1388c2e3709703c95c01c25cbe3e6a1d1..d0bc02ef6a548e6ff693ece96fd84ba8b0711591 100644
+--- a/packages/client/ui-settings-general/src/client/index.ts
++++ b/packages/client/ui-settings-general/src/client/index.ts
+@@ -70,7 +70,8 @@ export function apply(ctx: ClientContext): void {
+   const connection = ctx.get('connection') as ConnectionHandle
+   // The action follows the shared describe mirror, whose owning plugin
+   // already refreshes it on document commits and reconnects.
+-  const documentController = connection.isLoopback
++  const hasHostAuthority = connection.hasHostAuthority ?? connection.isLoopback
++  const documentController = hasHostAuthority
+     ? new SettingsDocumentStore(connection.api, ctx.settingsScope.describe())
+     : undefined
+   const documentInjected = documentController === undefined
+diff --git a/packages/client/ui-settings-general/src/client/locales.ts b/packages/client/ui-settings-general/src/client/locales.ts
+index a557855323daccdd5477524d6090d01342530e17..2712adcab1beffac1b67436fb984c2c67a75544b 100644
+--- a/packages/client/ui-settings-general/src/client/locales.ts
++++ b/packages/client/ui-settings-general/src/client/locales.ts
+@@ -7,6 +7,12 @@ export const zh = {
+   'close': '关闭',
+   'openDocument': '打开配置文件',
+   'openDocument.error': '无法打开配置文件',
++  'documentEditor.title': '编辑配置文件',
++  'documentEditor.description': '这是 Harness 主机上的原始配置文件。保存后会立即写入并重新加载。',
++  'documentEditor.loading': '读取中…',
++  'documentEditor.saving': '保存中…',
++  'documentEditor.save': '保存配置',
++  'documentEditor.cancel': '取消',
+   'general.nav': '通用设置',
+ } satisfies Record<string, string>
+ 
+@@ -20,5 +26,11 @@ export const en = {
+   'close': 'Close',
+   'openDocument': 'Open configuration file',
+   'openDocument.error': 'Could not open configuration file',
++  'documentEditor.title': 'Edit configuration file',
++  'documentEditor.description': 'This is the raw configuration file on the Harness host. Saving writes it and reloads the host settings.',
++  'documentEditor.loading': 'Loading…',
++  'documentEditor.saving': 'Saving…',
++  'documentEditor.save': 'Save configuration',
++  'documentEditor.cancel': 'Cancel',
+   'general.nav': 'General',
+ } satisfies Record<SettingsKey, string>
+diff --git a/packages/client/ui-settings-general/src/client/settings-document-store.ts b/packages/client/ui-settings-general/src/client/settings-document-store.ts
+index c6e2109f4d02b308b1b193f2817f7a12a71a0282..a75695b08b2743dc8925740b610099750c6328d2 100644
+--- a/packages/client/ui-settings-general/src/client/settings-document-store.ts
++++ b/packages/client/ui-settings-general/src/client/settings-document-store.ts
+@@ -1,6 +1,6 @@
+ /** State owner for the optional local settings-document action. */
+ 
+-import type { IApiClient } from '@deepseek-ai/dsh-api-remotes/client'
++import type { IApiClient, SettingsDocumentView } from '@deepseek-ai/dsh-api-remotes/client'
+ import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
+ import type { SettingsDescribeFace } from '@deepseek-ai/dsh-client-ui-settings/client'
+ 
+@@ -51,6 +51,20 @@ export class SettingsDocumentStore {
+     this.derive()
+   }
+ 
++  /** Read the current raw configuration document for the browser editor. */
++  async readDocument(): Promise<SettingsDocumentView> {
++    const response = await this.api.settings.readDocument({})
++    if (!response.result.ok) throw new Error(response.result.error.message)
++    return response.result.value
++  }
++
++  /** Write the browser editor's raw configuration document. */
++  async writeDocument(content: string): Promise<SettingsDocumentView> {
++    const response = await this.api.settings.writeDocument({ content })
++    if (!response.result.ok) throw new Error(response.result.error.message)
++    return response.result.value
++  }
++
+   /**
+    * Open the loaded document once; concurrent gestures collapse behind the in-flight action.
+    * @returns after the native-open request settles, or immediately when unavailable/already opening.
+diff --git a/packages/client/ui-settings-general/tests/apply.client.spec.ts b/packages/client/ui-settings-general/tests/apply.client.spec.ts
+index a0f0bb392ed5bc777113ad15ee07c66e5d747d67..d1eeb8be75cff7d1471771999d7ca7b3e2acb428 100644
+--- a/packages/client/ui-settings-general/tests/apply.client.spec.ts
++++ b/packages/client/ui-settings-general/tests/apply.client.spec.ts
+@@ -25,7 +25,7 @@ const SEATS = [
+   ['settings.section', GeneralSection],
+ ] as const
+ 
+-async function bench(isLoopback = true) {
++async function bench(isLoopback = true, hasHostAuthority?: boolean) {
+   const ctx = new Context()
+   await ctx.plugin(SlotRegistry).await()
+   const locale = new LocaleRuntime(ctx)
+@@ -49,6 +49,7 @@ async function bench(isLoopback = true) {
+   ctx.provide('connection', {
+     api: { settings: { describe: settingsDescribe, openDocument: settingsOpenDocument } },
+     isLoopback,
++    ...(hasHostAuthority === undefined ? {} : { hasHostAuthority }),
+   } as never)
+   new TestRemote(ctx)
+   await ctx.plugin({ inject: [...settingsInject], apply: settingsApply }).await()
+@@ -168,7 +169,22 @@ describe('ui-settings-general apply', () => {
+     await vi.waitFor(() => { expect(b.settingsDescribe).toHaveBeenCalledTimes(2) })
+   })
+ 
+-  it('withholds the loopback-only document action off-loopback', async () => {
++  it('registers the document action for a remote open-authority browser', async () => {
++    const b = await bench(false, true)
++    declare(b.slots)
++    const fiber = b.ctx.plugin({ inject: [...inject], apply })
++    await fiber.await()
++    const entry = b.slots.entries('settings.action')[0]!
++    const { controller } = (entry.inject as unknown as () => SettingsDocumentActionInjected)()
++    await vi.waitFor(() => { expect(b.settingsDescribe).toHaveBeenCalledOnce() })
++    await controller.load()
++    expect(controller.store.getSnapshot().status).toBe('ready')
++    await controller.open()
++    expect(b.settingsOpenDocument).toHaveBeenCalledOnce()
++    await fiber.dispose()
++  })
++
++  it('withholds the document action from a fenced remote browser', async () => {
+     const b = await bench(false)
+     declare(b.slots)
+     const fiber = b.ctx.plugin({ inject: [...inject], apply })
+diff --git a/packages/client/ui-settings-general/tests/components.client.spec.tsx b/packages/client/ui-settings-general/tests/components.client.spec.tsx
+index 9dc60430044265659e9117fe2b173243fd2ac156..31bd3a4249e7f0c1a7a3c1a9a72a775fe71be8be 100644
+--- a/packages/client/ui-settings-general/tests/components.client.spec.tsx
++++ b/packages/client/ui-settings-general/tests/components.client.spec.tsx
+@@ -66,11 +66,13 @@ describe('GeneralSection', () => {
+ })
+ 
+ describe('SettingsDocumentAction', () => {
+-  it('appears only for a file-backed provider and requests its Host-owned document', async () => {
+-    const openDocument = vi.fn(() => Promise.resolve({
+-      rpcId: 'document-open' as never,
+-      result: { ok: true as const, value: { opened: true as const } },
++  it('appears only for a file-backed provider and opens its browser editor', async () => {
++    const readDocument = vi.fn(() => Promise.resolve({
++      rpcId: 'document-read' as never,
++      result: { ok: true as const, value: { name: 'settings.yaml', format: 'yaml' as const, content: 'llm: {}\n' } },
+     }))
++    const writeDocument = vi.fn()
++
+     const controller = derivedDocumentStore({
+       settings: {
+         describe: vi.fn(() => Promise.resolve({
+@@ -80,7 +82,9 @@ describe('SettingsDocumentAction', () => {
+             value: { writable: true, hasDocument: true, namespaces: [] },
+           },
+         })),
+-        openDocument,
++        openDocument: vi.fn(),
++        readDocument,
++        writeDocument,
+       },
+     })
+     render(<SettingsDocumentAction
+@@ -91,7 +95,8 @@ describe('SettingsDocumentAction', () => {
+     />)
+     const action = await screen.findByRole('button', { name: 'Open configuration file' })
+     fireEvent.click(action)
+-    await waitFor(() => { expect(openDocument).toHaveBeenCalledWith({}) })
++    await waitFor(() => { expect(readDocument).toHaveBeenCalledWith({}) })
++    expect((screen.getByRole('textbox', { name: 'settings.yaml' }) as HTMLTextAreaElement).value).toBe('llm: {}\n')
+   })
+ 
+   it('stays absent without a document and follows a mirror refresh to available', async () => {
+@@ -104,7 +109,7 @@ describe('SettingsDocumentAction', () => {
+         rpcId: 'document-action-ready' as never,
+         result: { ok: true as const, value: { writable: true, hasDocument: true, namespaces: [] } },
+       })
+-    const wire = { settings: { describe, openDocument: vi.fn() } } as never
++    const wire = { settings: { describe, openDocument: vi.fn(), readDocument: vi.fn(), writeDocument: vi.fn() } } as never
+     const mirror = new SettingsDescribeMirror(wire)
+     const controller = new SettingsDocumentStore(wire, mirror)
+     const first = render(<SettingsDocumentAction
+@@ -131,7 +136,7 @@ describe('SettingsDocumentAction', () => {
+     expect(describe).toHaveBeenCalledTimes(2)
+   })
+ 
+-  it('keeps the action available and reports a native-open failure', async () => {
++  it('keeps the action available and reports a browser-editor failure', async () => {
+     const controller = derivedDocumentStore({
+       settings: {
+         describe: vi.fn(() => Promise.resolve({
+@@ -141,10 +146,9 @@ describe('SettingsDocumentAction', () => {
+             value: { writable: true, hasDocument: true, namespaces: [] },
+           },
+         })),
+-        openDocument: vi.fn(() => Promise.resolve({
+-          rpcId: 'document-open-failed' as never,
+-          result: { ok: false as const, error: { code: 'internal' as const, message: 'xdg-open missing', details: {} } },
+-        })),
++        openDocument: vi.fn(),
++        readDocument: vi.fn(() => Promise.reject(new Error('settings file is unreadable'))),
++        writeDocument: vi.fn(),
+       },
+     })
+     render(<SettingsDocumentAction
+@@ -154,7 +158,7 @@ describe('SettingsDocumentAction', () => {
+       useSnapshot={bindSnapshotSelector(controller.store)}
+     />)
+     fireEvent.click(await screen.findByRole('button', { name: 'Open configuration file' }))
+-    expect((await screen.findByRole('alert')).textContent).toBe('Could not open configuration file')
++    expect((await screen.findByRole('alert')).textContent).toBe('settings file is unreadable')
+     expect(screen.getByRole('button', { name: 'Open configuration file' })).toBeTruthy()
+   })
+ })
+diff --git a/packages/client/ui-settings/src/client/index.ts b/packages/client/ui-settings/src/client/index.ts
+index f2763da9f76c3cbb90cfe4634208b5458a1a3f40..e7c2a96aa524ef8ccd077b4ab00196c7500a6cc3 100644
+--- a/packages/client/ui-settings/src/client/index.ts
++++ b/packages/client/ui-settings/src/client/index.ts
+@@ -49,10 +49,8 @@ export const inject = ['connection', 'remote']
+ export function apply(ctx: ClientContext): void {
+   const schema = new SettingsSchemaService(ctx)
+   const connection = ctx.get('connection') as ConnectionHandle
+-  const mirror = new SettingsDescribeMirror(
+-    connection.api,
+-    connection.isLoopback ? 'host' : 'memory',
+-  )
++  const persistence = connection.hasHostAuthority ?? connection.isLoopback ? 'host' : 'memory'
++  const mirror = new SettingsDescribeMirror(connection.api, persistence)
+   ctx.effect(() => {
+     const disposers = [
+       (ctx.get('remote') as ClientContext['remote']).$on('settings/document-updated', () => { void mirror.load() }),
+diff --git a/packages/client/ui-settings/src/client/settings-scope.ts b/packages/client/ui-settings/src/client/settings-scope.ts
+index 36e674c9375dda61bad8fc5230c5bca374ae84be..cf3b0d80f3ebe40e968e510166cfbeb6ae1184f6 100644
+--- a/packages/client/ui-settings/src/client/settings-scope.ts
++++ b/packages/client/ui-settings/src/client/settings-scope.ts
+@@ -61,7 +61,7 @@ export class SettingsScopeController<T> implements SettingsScope<T> {
+    * @param api - settings wire face (writes only; reads ride the mirror).
+    * @param spec - namespace identity and optional narrowing decoder.
+    * @param mirror - the shared describe mirror this scope derives from.
+-   * @param persistence - remote browsers remain process-local because settings RPCs are loopback-only.
++   * @param persistence - settings are host-backed when the core grants host authority; otherwise the scope is memory-only.
+    * @param schema - settings-owned schema operations.
+    */
+   constructor(
+@@ -275,11 +275,12 @@ export class SettingsScopeBinder extends Service {
+   bind<T>(spec: SettingsScopeSpec<T>): SettingsScope<T> {
+     const ctx = this.ctx
+     const connection = ctx.get('connection') as ConnectionHandle
++    const hasHostAuthority = connection.hasHostAuthority ?? connection.isLoopback
+     const controller = new SettingsScopeController<T>(
+       connection.api,
+       spec,
+       this.mirror,
+-      connection.isLoopback ? 'host' : 'memory',
++      hasHostAuthority ? 'host' : 'memory',
+       this.schema,
+     )
+     ctx.effect(() => {
+diff --git a/packages/client/ui-settings/tests/settings-scope.client.spec.ts b/packages/client/ui-settings/tests/settings-scope.client.spec.ts
+index ddbb6784d17bfe7664b55e2468ce514d4fe4f68b..7959e09a994f70f51f66369390f216f25f6caa3d 100644
+--- a/packages/client/ui-settings/tests/settings-scope.client.spec.ts
++++ b/packages/client/ui-settings/tests/settings-scope.client.spec.ts
+@@ -452,6 +452,29 @@ describe('SettingsScopeBinder.bind', () => {
+     expect(theme.getSnapshot()).toMatchObject({ revision: 1 })
+   })
+ 
++  it('binds an open-authority remote browser in host mode', async () => {
++    const describeCall = vi.fn().mockResolvedValue(described({ preference: 'dark' }, 1))
++    const wire = { settings: { describe: describeCall } }
++    const mirror = new SettingsDescribeMirror(wire as never, 'host')
++    const ctx = new Context()
++    ctx.provide('connection', { api: wire, isLoopback: false, hasHostAuthority: true } as never)
++    let scope!: SettingsScope<UiTestSettings>
++    new TestRemote(ctx)
++    await ctx.plugin(SettingsScopeBinder, { mirror, schema: settingsSchema }).await()
++    const fiber = ctx.plugin({
++      inject: ['connection', 'remote', 'settingsScope'],
++      apply: (plugin: Context) => {
++        scope = plugin.settingsScope.bind<UiTestSettings>({ namespace: 'ui-test' })
++      },
++    })
++    await fiber.await()
++    await vi.waitFor(() => {
++      expect(scope.getSnapshot()).toMatchObject({ status: 'ready', mode: 'host', writable: true, value: { preference: 'dark' } })
++    })
++    expect(describeCall).toHaveBeenCalledTimes(1)
++    await fiber.dispose()
++  })
++
+   it('binds a remote browser in memory mode without starting a settings read', async () => {
+     const describeCall = vi.fn()
+     const wire = { settings: { describe: describeCall } }
+diff --git a/packages/host/apiproxy/src/api-proxy.ts b/packages/host/apiproxy/src/api-proxy.ts
+index ba354e1173177951d22834cc0f24e36ec93751d9..3d97ee68ae5e407fa9903d8f62ade4055194f432 100644
+--- a/packages/host/apiproxy/src/api-proxy.ts
++++ b/packages/host/apiproxy/src/api-proxy.ts
+@@ -3211,6 +3211,47 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
+         }
+         return openTextFile(request, path, signal)
+       },
++      async readDocument(request) {
++        const settings = ctx.get('settings')
++        if (settings === undefined) return err(request, settingsAbsent())
++        try {
++          const document = await settings.readDocument()
++          if (document === undefined) {
++            return err(request, {
++              code: 'internal',
++              message: 'settings provider has no browser-editable document',
++              details: {},
++            })
++          }
++          return ok(request, document)
++        } catch (error: unknown) {
++          return err(request, {
++            code: 'internal',
++            message: `settings document read failed: ${error instanceof Error ? error.message : String(error)}`,
++            details: {},
++          })
++        }
++      },
++      async writeDocument(request) {
++        const settings = ctx.get('settings')
++        if (settings === undefined) return err(request, settingsAbsent())
++        if (!settings.writable) {
++          return err(request, {
++            code: 'internal',
++            message: 'settings provider is read-only; the document cannot be written',
++            details: {},
++          })
++        }
++        try {
++          return ok(request, await settings.writeDocument(request.payload.content))
++        } catch (error: unknown) {
++          return err(request, {
++            code: 'internal',
++            message: `settings document write failed: ${error instanceof Error ? error.message : String(error)}`,
++            details: {},
++          })
++        }
++      },
+       update: request => settingsWrite(request, request.payload.ns, 'update', request.payload.patch, request.payload.expectedRevision),
+       replace: request => settingsWrite(request, request.payload.ns, 'replace', request.payload.section, request.payload.expectedRevision),
+       mutate: request => settingsWrite(request, request.payload.ns, 'mutate', request.payload.ops, request.payload.expectedRevision),
+diff --git a/packages/host/apiproxy/src/api/index.ts b/packages/host/apiproxy/src/api/index.ts
+index b5e1d1ffd977a6c218b296bacd2a13f7ab116666..03fbf140c5a827ad3743acc1bd14f4981f020d29 100644
+--- a/packages/host/apiproxy/src/api/index.ts
++++ b/packages/host/apiproxy/src/api/index.ts
+@@ -58,7 +58,7 @@ export type { SkillsApi, SkillEntry } from './skills.ts'
+ export type { AgentPresetsApi, AgentPresetEntry } from './agent-presets.ts'
+ export type { EventsApi, MuxFrame, HostFrame, QueuedInboxItem, ToolCallView, ToolEventView, ToolResultView } from './events.ts'
+ export type { GoalsApi, GoalId, GoalRef } from './goals.ts'
+-export type { SettingsApi, SettingsNamespaceView, SettingsPathOpView, SettingsSecretView } from './settings.ts'
++export type { SettingsApi, SettingsDocumentView, SettingsNamespaceView, SettingsPathOpView, SettingsSecretView } from './settings.ts'
+ export type { CredentialsApi, CredentialView } from './credentials.ts'
+ export type { ConfigurableProviderView, DiscoveredModelView, LlmApi } from './llm.ts'
+ export type { DownloadsApi } from './downloads.ts'
+diff --git a/packages/host/apiproxy/src/api/rpc-map.ts b/packages/host/apiproxy/src/api/rpc-map.ts
+index 80dede179913fc3f96bc32e71e77c75ee8460cf9..9760617f22c554db9c992335670fb2e2de43d8d7 100644
+--- a/packages/host/apiproxy/src/api/rpc-map.ts
++++ b/packages/host/apiproxy/src/api/rpc-map.ts
+@@ -65,6 +65,8 @@ export interface RpcMethodMap {
+   'goal.clear': GoalsApi['clear']
+   'settings.describe': SettingsApi['describe']
+   'settings.openDocument': SettingsApi['openDocument']
++  'settings.readDocument': SettingsApi['readDocument']
++  'settings.writeDocument': SettingsApi['writeDocument']
+   'settings.update': SettingsApi['update']
+   'settings.replace': SettingsApi['replace']
+   'settings.mutate': SettingsApi['mutate']
+diff --git a/packages/host/apiproxy/src/api/settings.schema.ts b/packages/host/apiproxy/src/api/settings.schema.ts
+index 19fa2c012e1e842fc7885c860e1cfccd3758b27d..60c77ee38db7b46faf0f826f0670b858b7167bbb 100644
+--- a/packages/host/apiproxy/src/api/settings.schema.ts
++++ b/packages/host/apiproxy/src/api/settings.schema.ts
+@@ -6,7 +6,7 @@
+ import { z } from 'zod'
+ import type { RequestPayload, ResponseValue } from './rpc-map.ts'
+ import type { Wire } from './rpc.schema.ts'
+-import type { SettingsNamespaceView, SettingsPathOpView, SettingsSecretView } from './settings.ts'
++import type { SettingsDocumentView, SettingsNamespaceView, SettingsPathOpView, SettingsSecretView } from './settings.ts'
+ 
+ /** One redacted secret slot. */
+ export const settingsSecretViewSchema = z.object({
+@@ -44,6 +44,24 @@ export const settingsOpenDocumentValueSchema = z.object({
+   opened: z.literal(true),
+ }) satisfies z.ZodType<Wire<ResponseValue<'settings.openDocument'>>>
+ 
++/** settings.readDocument request payload. */
++export const settingsReadDocumentRequestSchema = z.object({}) satisfies z.ZodType<Wire<RequestPayload<'settings.readDocument'>>>
++
++/** settings.readDocument response value. */
++export const settingsReadDocumentValueSchema = z.object({
++  name: z.string().min(1),
++  format: z.union([z.literal('yaml'), z.literal('json')]),
++  content: z.string(),
++}) satisfies z.ZodType<Wire<ResponseValue<'settings.readDocument'>>> as z.ZodType<Wire<SettingsDocumentView>>
++
++/** settings.writeDocument request payload. */
++export const settingsWriteDocumentRequestSchema = z.object({
++  content: z.string().max(2_000_000),
++}) satisfies z.ZodType<Wire<RequestPayload<'settings.writeDocument'>>>
++
++/** settings.writeDocument response value. */
++export const settingsWriteDocumentValueSchema = settingsReadDocumentValueSchema satisfies z.ZodType<Wire<ResponseValue<'settings.writeDocument'>>>
++
+ /** settings.update request payload. */
+ export const settingsUpdateRequestSchema = z.object({
+   ns: z.string().min(1),
+diff --git a/packages/host/apiproxy/src/api/settings.ts b/packages/host/apiproxy/src/api/settings.ts
+index 5bbc6d56d953a9d8e75dd962a2f7371fec5cf38f..66d3861ddaf75977a302bb73b16d3cd03a1af11b 100644
+--- a/packages/host/apiproxy/src/api/settings.ts
++++ b/packages/host/apiproxy/src/api/settings.ts
+@@ -49,6 +49,16 @@ export type SettingsPathOpView =
+   | { op: 'set'; path: string[]; value: unknown }
+   | { op: 'unset'; path: string[] }
+ 
++/** Browser-safe view of the provider-owned configuration document. */
++export interface SettingsDocumentView {
++  /** File name only; absolute host paths never cross the API. */
++  name: string
++  /** Serialization format used by the provider. */
++  format: 'yaml' | 'json'
++  /** Raw document text. */
++  content: string
++}
++
+ /** Settings-domain unary methods (the map keys settings.* of RpcMethodMap). */
+ export interface SettingsApi {
+   /**
+@@ -74,6 +84,14 @@ export interface SettingsApi {
+     request: RpcRequest<{}>, signal: AbortSignal,
+   ): Promise<RpcResponse<{ opened: true }>>
+ 
++  /** Read the raw provider-owned configuration document for a browser editor. */
++  readDocument(request: RpcRequest<{}>): Promise<RpcResponse<SettingsDocumentView>>
++
++  /** Replace the provider-owned configuration document from a browser editor. */
++  writeDocument(
++    request: RpcRequest<{ content: string }>,
++  ): Promise<RpcResponse<SettingsDocumentView>>
++
+   /**
+    * Merge a patch into one namespace's user layer (validate → persist →
+    * commit). Secret-role fields may be INCLUDED in the patch (write-only
+diff --git a/packages/host/apiproxy/src/fetch/client.ts b/packages/host/apiproxy/src/fetch/client.ts
+index 70e3ece58fe9d16462c23b9b810923d378a15cd1..a63c2f96233ddc79ebc2de8142e5699f38c48a41 100644
+--- a/packages/host/apiproxy/src/fetch/client.ts
++++ b/packages/host/apiproxy/src/fetch/client.ts
+@@ -55,7 +55,8 @@ import {
+ } from '../api/goals.schema.ts'
+ import {
+   settingsDescribeValueSchema, settingsMutateValueSchema, settingsOpenDocumentValueSchema,
+-  settingsReplaceValueSchema, settingsUpdateValueSchema,
++  settingsReadDocumentValueSchema, settingsReplaceValueSchema, settingsUpdateValueSchema,
++  settingsWriteDocumentValueSchema,
+ } from '../api/settings.schema.ts'
+ import {
+   credentialsDescribeValueSchema, credentialsSetValueSchema, credentialsUnsetValueSchema,
+@@ -147,6 +148,8 @@ export interface IApiClient {
+   settings: {
+     describe(payload: RequestPayload<'settings.describe'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'settings.describe'>>>
+     openDocument(payload: RequestPayload<'settings.openDocument'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'settings.openDocument'>>>
++    readDocument(payload: RequestPayload<'settings.readDocument'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'settings.readDocument'>>>
++    writeDocument(payload: RequestPayload<'settings.writeDocument'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'settings.writeDocument'>>>
+     update(payload: RequestPayload<'settings.update'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'settings.update'>>>
+     replace(payload: RequestPayload<'settings.replace'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'settings.replace'>>>
+     mutate(payload: RequestPayload<'settings.mutate'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'settings.mutate'>>>
+@@ -213,6 +216,8 @@ const UNARY_VALUE_SCHEMAS: { [K in keyof RpcMethodMap]: z.ZodType<Wire<ResponseV
+   'goal.clear': goalClearValueSchema,
+   'settings.describe': settingsDescribeValueSchema,
+   'settings.openDocument': settingsOpenDocumentValueSchema,
++  'settings.readDocument': settingsReadDocumentValueSchema,
++  'settings.writeDocument': settingsWriteDocumentValueSchema,
+   'settings.update': settingsUpdateValueSchema,
+   'settings.replace': settingsReplaceValueSchema,
+   'settings.mutate': settingsMutateValueSchema,
+@@ -483,6 +488,8 @@ export abstract class AbstractApiClient implements IApiClient {
+   readonly settings: IApiClient['settings'] = {
+     describe: (payload, signal) => this.callUnary('settings.describe', payload, signal),
+     openDocument: (payload, signal) => this.callUnary('settings.openDocument', payload, signal),
++    readDocument: (payload, signal) => this.callUnary('settings.readDocument', payload, signal),
++    writeDocument: (payload, signal) => this.callUnary('settings.writeDocument', payload, signal),
+     update: (payload, signal) => this.callUnary('settings.update', payload, signal),
+     replace: (payload, signal) => this.callUnary('settings.replace', payload, signal),
+     mutate: (payload, signal) => this.callUnary('settings.mutate', payload, signal),
+diff --git a/packages/host/apiproxy/src/fetch/handler.ts b/packages/host/apiproxy/src/fetch/handler.ts
+index 697171ec53fc817405445aece90c7ddad1b38c67..ba330d02ed0203434163966114b7a7bfb285a6ce 100644
+--- a/packages/host/apiproxy/src/fetch/handler.ts
++++ b/packages/host/apiproxy/src/fetch/handler.ts
+@@ -58,7 +58,8 @@ import {
+ } from '../api/goals.schema.ts'
+ import {
+   settingsDescribeRequestSchema, settingsMutateRequestSchema, settingsOpenDocumentRequestSchema,
+-  settingsReplaceRequestSchema, settingsUpdateRequestSchema,
++  settingsReadDocumentRequestSchema, settingsReplaceRequestSchema, settingsUpdateRequestSchema,
++  settingsWriteDocumentRequestSchema,
+ } from '../api/settings.schema.ts'
+ import {
+   credentialsDescribeRequestSchema, credentialsSetRequestSchema, credentialsUnsetRequestSchema,
+@@ -131,6 +132,8 @@ const UNARY_ROUTES: UnaryRoutes = {
+   'goal.clear': { schema: goalClearRequestSchema, invoke: (api, r) => api.goals.clear(r) },
+   'settings.describe': { schema: settingsDescribeRequestSchema, invoke: (api, r) => api.settings.describe(r) },
+   'settings.openDocument': { schema: settingsOpenDocumentRequestSchema, invoke: (api, r, signal) => api.settings.openDocument(r, signal) },
++  'settings.readDocument': { schema: settingsReadDocumentRequestSchema, invoke: (api, r) => api.settings.readDocument(r) },
++  'settings.writeDocument': { schema: settingsWriteDocumentRequestSchema, invoke: (api, r) => api.settings.writeDocument(r) },
+   'settings.update': { schema: settingsUpdateRequestSchema, invoke: (api, r) => api.settings.update(r) },
+   'settings.replace': { schema: settingsReplaceRequestSchema, invoke: (api, r) => api.settings.replace(r) },
+   'settings.mutate': { schema: settingsMutateRequestSchema, invoke: (api, r) => api.settings.mutate(r) },
+diff --git a/packages/host/apiproxy/src/index.ts b/packages/host/apiproxy/src/index.ts
+index ac6c770801c498cd48220722790dfeefdf837227..f2d04ab6ffaa0e10045ccaa5397c20fa8e9021f6 100644
+--- a/packages/host/apiproxy/src/index.ts
++++ b/packages/host/apiproxy/src/index.ts
+@@ -39,6 +39,12 @@ declare module '@deepseek-ai/cordis' {
+ 
+ /** Gateway plugin configuration. */
+ export interface Config {
++  /**
++   * Core caller authority supplied by the transport composition. Open mode
++   * intentionally exposes host-native path capabilities to every caller that
++   * reaches the service; fenced mode preserves ordinary capability detection.
++   */
++  authority?: 'fenced' | 'open'
+   /**
+    * Whether this deployment can hand paths to a native desktop opener —
+    * the `hasDocument` capability the agent-preset roster reports. Absent,
+@@ -73,6 +79,7 @@ export class ApiProxyService extends Service implements ApiProxy {
+   ]
+ 
+   static Config: z<Config> = z.object({
++    authority: z.union(['fenced', 'open']),
+     nativeOpen: z.boolean(),
+     sessionExportCompressionLevel: z.number().step(1).min(0).max(9)
+       .default(DEFAULT_SESSION_LOG_COMPRESSION_LEVEL) as z<SessionLogCompressionLevel>,
+@@ -99,7 +106,9 @@ export class ApiProxyService extends Service implements ApiProxy {
+       defaultModelSelection: () => ctx.agentDefaultModel.currentSelection(),
+       saveDefaultModelSelection: selection => ctx.agentDefaultModel.saveSelection(selection),
+       cwd: process.cwd(),
+-      ...config.nativeOpen === undefined ? {} : { canOpenPath: () => config.nativeOpen as boolean },
++      ...(config.authority === 'open'
++        ? { canOpenPath: () => true }
++        : config.nativeOpen === undefined ? {} : { canOpenPath: () => config.nativeOpen as boolean }),
+       ...(config.sessionExportCompressionLevel === undefined
+         ? {}
+         : { sessionExportCompressionLevel: config.sessionExportCompressionLevel }),
+diff --git a/packages/settings/settings-file/src/index.ts b/packages/settings/settings-file/src/index.ts
+index 0a37fd866ffb40e8fa8499c804dde0785d269773..0288dcc3fdeccc0e88eb2d2eb99bf354e2227591 100644
+--- a/packages/settings/settings-file/src/index.ts
++++ b/packages/settings/settings-file/src/index.ts
+@@ -11,7 +11,7 @@ import { Context, Service } from '@deepseek-ai/cordis'
+ import z from '@deepseek-ai/schemastery'
+ import { watch as chokidarWatch } from 'chokidar'
+ import { mkdir, readFile, writeFile } from 'node:fs/promises'
+-import { dirname, extname, join, resolve } from 'node:path'
++import { basename, dirname, extname, join, resolve } from 'node:path'
+ import { Document, parseDocument } from 'yaml'
+ import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
+ import { canonicalizeWatchPath, resolveDshHome } from '@deepseek-ai/dsh-home-paths'
+@@ -149,6 +149,46 @@ export class FileSettingsProvider extends SettingsProvider {
+     return this.spec.filename
+   }
+ 
++  /** Read the raw settings document without exposing its absolute host path. */
++  override readDocument(): Promise<{ name: string; format: 'yaml' | 'json'; content: string }> {
++    return this.enqueue(async () => {
++      let content: string
++      try {
++        content = await readFile(this.spec.filename, 'utf8')
++      } catch (error) {
++        if (!isENOENT(error)) throw error
++        await mkdir(dirname(this.spec.filename), { recursive: true, mode: 0o700 })
++        try {
++          await writeFile(this.spec.filename, '', { flag: 'wx', mode: 0o600 })
++        } catch (createError) {
++          if (!isEEXIST(createError)) throw createError
++        }
++        content = ''
++      }
++      const parsed = this.parse(content)
++      this.text = content
++      this.publish(parsed)
++      return { name: basename(this.spec.filename), format: this.spec.format, content }
++    })
++  }
++
++  /** Replace the raw settings document, preserving the provider's parse/watch contract. */
++  override writeDocument(content: string): Promise<{ name: string; format: 'yaml' | 'json'; content: string }> {
++    if (content.length > 2_000_000) {
++      return Promise.reject(new Error('settings document exceeds the 2 MB browser-editing limit'))
++    }
++    const parsed = this.parse(content)
++    return this.enqueue(async () => {
++      await mkdir(dirname(this.spec.filename), { recursive: true, mode: 0o700 })
++      await withFileLock(this.spec.filename, async () => {
++        await writeFileAtomic(this.spec.filename, content, { mode: 0o600, dirMode: 0o700 })
++        this.text = content
++        this.publish(parsed)
++      })
++      return { name: basename(this.spec.filename), format: this.spec.format, content }
++    })
++  }
++
+   /** Materialize an absent owner-only document, then return its resolved path. */
+   override prepareDocument(): Promise<string> {
+     return this.enqueue(async () => {
+diff --git a/packages/settings/settings/src/index.ts b/packages/settings/settings/src/index.ts
+index 4150aa9a81c032bc8cca5363dd7ed2b2c7dbc1ab..32948d1b63e79fd832a6bb70848599d600cc8125 100644
+--- a/packages/settings/settings/src/index.ts
++++ b/packages/settings/settings/src/index.ts
+@@ -99,6 +99,16 @@ export interface SettingsDescribeOptions {
+   redactSecrets?: boolean
+ }
+ 
++/** A provider-owned configuration document exposed to a trusted browser UI. */
++export interface SettingsDocument {
++  /** File name only; absolute host paths never cross this seam. */
++  name: string
++  /** Serialization format used by the provider. */
++  format: 'yaml' | 'json'
++  /** Current raw document text. */
++  content: string
++}
++
+ /** Owner-facing handle for one registered namespace. */
+ export interface SettingsScope<T> {
+   /** Current resolved value: schema defaults, then `base`, then the user layer. */
+@@ -399,6 +409,22 @@ export abstract class SettingsProvider extends Service {
+     return undefined
+   }
+ 
++  /**
++   * Read the provider-owned configuration document for a browser editor.
++   * Non-file providers do not expose a document by default.
++   */
++  readDocument(): Promise<SettingsDocument | undefined> {
++    return Promise.resolve(undefined)
++  }
++
++  /**
++   * Replace the provider-owned configuration document from a browser editor.
++   * Providers that do not own a file reject the operation.
++   */
++  writeDocument(_content: string): Promise<SettingsDocument> {
++    return Promise.reject(new Error('settings provider has no editable document'))
++  }
++
+   /**
+    * Prepare the provider's user-editable document for a native editor. File
+    * providers may materialize an absent document before returning its path;
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 737a21eea64d9ab25ed35258719442ae55376710..bd366be6b0ae2e567e646ef1b5c92f4b61b75452 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -110,13 +110,16 @@ importers:
+         version: 5.0.0
+       tsdown:
+         specifier: ^0.22.2
+-        version: 0.22.2(oxc-resolver@11.20.0)(publint@0.3.21)(tsx@4.22.4)(typescript@6.0.3)
++        version: 0.22.2(oxc-resolver@11.20.0)(publint@0.3.21)(tsx@4.22.4)(typescript@6.0.3)(unrun@0.3.1)
+       tsx:
+         specifier: ^4.22.4
+         version: 4.22.4
+       typescript:
+         specifier: ^6.0.3
+         version: 6.0.3
++      unrun:
++        specifier: ^0.3.1
++        version: 0.3.1
+       vite-tsconfig-paths:
+         specifier: ^6.1.1
+         version: 6.1.1(typescript@6.0.3)(vite@8.0.16(@types/node@22.20.0)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
+@@ -1066,9 +1069,6 @@ importers:
+       '@deepseek-ai/dsh-llm':
+         specifier: workspace:^
+         version: link:../../llm/llm
+-      '@deepseek-ai/dsh-llm-deepseek':
+-        specifier: workspace:^
+-        version: link:../../llm/llm-deepseek
+       '@deepseek-ai/dsh-llm-pi-ai':
+         specifier: workspace:^
+         version: link:../../llm/llm-pi-ai
+@@ -1222,9 +1222,6 @@ importers:
+       '@deepseek-ai/dsh-web':
+         specifier: workspace:^
+         version: link:../../web/web
+-      '@deepseek-ai/dsh-web-search-deepseek':
+-        specifier: workspace:^
+-        version: link:../../web/web-search-deepseek
+       '@deepseek-ai/dsh-workflow-worker-thread':
+         specifier: workspace:^
+         version: link:../../workflow/workflow-worker-thread
+@@ -14352,6 +14349,16 @@ packages:
+     resolution: {integrity: sha512-pjy2bYhSsufwWlKwPc+l3cN7+wuJlK6uz0YdJEOlQDbl6jo/YlPi4mb8agUkVC8BF7V8NuzeyPNqRksA3hztKQ==}
+     engines: {node: '>= 0.8'}
+ 
++  unrun@0.3.1:
++    resolution: {integrity: sha512-onIck/oNnCaytwths1ZVp1LK2Gq2hPoyFhiHebObuUXqR3S0uHuLLaBK8K6mRRgV7Ptip8AnNvaUsgzwWwBZuA==}
++    engines: {node: ^22.13.0 || >=24.0.0}
++    hasBin: true
++    peerDependencies:
++      synckit: ^0.11.11
++    peerDependenciesMeta:
++      synckit:
++        optional: true
++
+   update-browserslist-db@1.2.3:
+     resolution: {integrity: sha512-Js0m9cx+qOgDxo0eMiFGEueWztz+d4+M3rGlmKPT+T4IS/jP4ylw3Nwpu6cpTTP8R1MAC1kF4VbdLt3ARf209w==}
+     hasBin: true
+@@ -19820,7 +19827,7 @@ snapshots:
+     optionalDependencies:
+       typescript: 6.0.3
+ 
+-  tsdown@0.22.2(oxc-resolver@11.20.0)(publint@0.3.21)(tsx@4.22.4)(typescript@6.0.3):
++  tsdown@0.22.2(oxc-resolver@11.20.0)(publint@0.3.21)(tsx@4.22.4)(typescript@6.0.3)(unrun@0.3.1):
+     dependencies:
+       ansis: 4.3.1
+       cac: 7.0.0
+@@ -19841,6 +19848,7 @@ snapshots:
+       publint: 0.3.21
+       tsx: 4.22.4
+       typescript: 6.0.3
++      unrun: 0.3.1
+     transitivePeerDependencies:
+       - '@ts-macro/tsc'
+       - '@typescript/native-preview'
+@@ -19925,6 +19933,10 @@ snapshots:
+ 
+   unpipe@1.0.0: {}
+ 
++  unrun@0.3.1:
++    dependencies:
++      rolldown: 1.1.1
++
+   update-browserslist-db@1.2.3(browserslist@4.28.6):
+     dependencies:
+       browserslist: 4.28.6
